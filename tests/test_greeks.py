@@ -2,33 +2,120 @@ import math
 
 import pytest
 
-from pricing.greeks import vega, vega_fd
+from pricing.black76 import price
+from pricing.greeks import (
+    delta_f,
+    delta_f_fd,
+    dprice_ddf,
+    dprice_dtau,
+    dprice_dtau_fd,
+    gamma_f,
+    gamma_f_fd,
+    vega,
+    vega_fd,
+)
 from pricing.types import Option
 
 
-def test_vega_matches_finite_difference():
-    opt = Option(
+def _base_opt(cp: str) -> Option:
+    tau = 1.2
+    return Option(
         forward=100.0,
-        strike=110.0,
-        tau=1.5,
+        strike=105.0,
+        tau=tau,
         vol=0.25,
-        df=math.exp(-0.03 * 1.5),
-        cp="C",
+        df=math.exp(-0.03 * tau),
+        cp=cp,
     )
 
-    v_a = vega(opt)
-    v_n = vega_fd(opt, bump=1e-4)
 
-    # FD is approximate; use a reasonable tolerance
-    assert v_a == pytest.approx(v_n, rel=1e-6, abs=1e-10)
+# -------------------------
+# FD agreement tests
+# -------------------------
+
+
+def test_delta_matches_fd_for_call_and_put():
+    for cp in ("C", "P"):
+        opt = _base_opt(cp)
+        assert delta_f(opt) == pytest.approx(
+            delta_f_fd(opt, bump=1e-4),
+            rel=1e-6,
+            abs=1e-10,
+        )
+
+
+def test_gamma_matches_fd_for_call_and_put():
+    for cp in ("C", "P"):
+        opt = _base_opt(cp)
+        # 2nd derivatives are noisier -> larger bump + looser tol
+        assert gamma_f(opt) == pytest.approx(
+            gamma_f_fd(opt, bump=1e-2),
+            rel=1e-5,
+            abs=1e-10,
+        )
+
+
+def test_vega_matches_fd_for_call_and_put():
+    for cp in ("C", "P"):
+        opt = _base_opt(cp)
+        assert vega(opt) == pytest.approx(
+            vega_fd(opt, bump=1e-4),
+            rel=1e-6,
+            abs=1e-10,
+        )
+
+
+def test_dprice_dtau_matches_fd_for_call_and_put():
+    for cp in ("C", "P"):
+        opt = _base_opt(cp)
+        # time derivatives are touchier -> looser tol
+        assert dprice_dtau(opt) == pytest.approx(
+            dprice_dtau_fd(opt, bump=1e-5),
+            rel=1e-4,
+            abs=1e-8,
+        )
+
+
+def test_dprice_ddf_equals_price_over_df_for_call_and_put():
+    for cp in ("C", "P"):
+        opt = _base_opt(cp)
+        assert dprice_ddf(opt) == pytest.approx(price(opt) / opt.df, rel=1e-15, abs=0.0)
+
+
+# -------------------------
+# Call/put structural identity tests (no FD)
+# -------------------------
+
+
+def test_gamma_same_for_call_and_put():
+    call = _base_opt("C")
+    put = _base_opt("P")
+    assert gamma_f(call) == pytest.approx(gamma_f(put), rel=1e-15, abs=0.0)
 
 
 def test_vega_same_for_call_and_put():
-    base = dict(forward=100.0, strike=100.0, tau=1.0, vol=0.2, df=0.95)
-    call = Option(**base, cp="C")
-    put = Option(**base, cp="P")
-
+    call = _base_opt("C")
+    put = _base_opt("P")
     assert vega(call) == pytest.approx(vega(put), rel=1e-15, abs=0.0)
+
+
+def test_dprice_dtau_same_for_call_and_put():
+    call = _base_opt("C")
+    put = _base_opt("P")
+    assert dprice_dtau(call) == pytest.approx(dprice_dtau(put), rel=1e-15, abs=0.0)
+
+
+def test_delta_put_call_parity_derivative_relation():
+    call = _base_opt("C")
+    put = _base_opt("P")
+    # From put-call parity: C - P = DF*(F - K)
+    # Differentiate wrt F: dC/dF - dP/dF = DF
+    assert (delta_f(call) - delta_f(put)) == pytest.approx(call.df, rel=1e-12, abs=1e-12)
+
+
+# -------------------------
+# Edge-case sanity tests
+# -------------------------
 
 
 def test_vega_zero_at_expiry_or_zero_vol():
