@@ -1,0 +1,32 @@
+[project]
+name = "msthesis-volatility"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+fix = true
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "I",   # pyflakes/pycodestyle/imports
+  "B",             # bugbear
+  "UP",            # pyupgrade
+]
+ignore = [
+  "E501",          # line length (Black handles; or keep ignored if you enforce 100)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pricing"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
