@@ -5,7 +5,7 @@ from dataclasses import replace
 
 from .black76 import price as black76_price
 from .greeks import vega as black76_vega
-from .types import Option
+from .types import Black76Option
 
 DEFAULT_TOL = 1e-10
 
@@ -14,7 +14,7 @@ class ImpliedVolError(ValueError):
     """Raised when implied volatility cannot be determined (e.g. price out of bounds)."""
 
 
-def _undiscounted_bounds(opt: Option) -> tuple[float, float]:
+def _undiscounted_bounds(opt: Black76Option) -> tuple[float, float]:
     """
     No-arbitrage bounds for undiscounted option price under Black-76.
 
@@ -28,7 +28,7 @@ def _undiscounted_bounds(opt: Option) -> tuple[float, float]:
 
 
 def _validate_inputs_bounds(
-    opt: Option,
+    opt: Black76Option,
     target_price: float,
     *,
     price_tol: float,
@@ -55,7 +55,7 @@ def _validate_inputs_bounds(
 
 
 def _is_intrinsic_price(
-    opt: Option,
+    opt: Black76Option,
     target_price: float,
     *,
     price_tol: float,
@@ -89,7 +89,7 @@ def _ensure_bracketed(
 
 
 def implied_vol(
-    opt: Option,
+    opt: Black76Option,
     target_price: float,
     *,
     vol_lower: float = 0.0,
@@ -105,7 +105,7 @@ def implied_vol(
     Parameters
     ----------
     opt:
-        Option object. Its `vol` field is ignored; we solve for sigma.
+        Black76Option object. Its `vol` field is ignored; we solve for sigma.
     target_price:
         Discounted market price (same units as pricing.black76.price()).
     vol_lower, vol_upper:
@@ -169,7 +169,7 @@ def implied_vol(
 
 
 def implied_vol_newton(
-    opt: Option,
+    opt: Black76Option,
     target_price: float,
     *,
     sigma0: float | None = None,

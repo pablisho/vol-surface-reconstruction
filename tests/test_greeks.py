@@ -14,12 +14,12 @@ from pricing.greeks import (
     vega,
     vega_fd,
 )
-from pricing.types import Option
+from pricing.types import Black76Option
 
 
-def _base_opt(cp: str) -> Option:
+def _base_opt(cp: str) -> Black76Option:
     tau = 1.2
-    return Option(
+    return Black76Option(
         forward=100.0,
         strike=105.0,
         tau=tau,
@@ -119,8 +119,8 @@ def test_delta_put_call_parity_derivative_relation():
 
 
 def test_vega_zero_at_expiry_or_zero_vol():
-    opt_t0 = Option(forward=100.0, strike=100.0, tau=0.0, vol=0.2, df=0.95, cp="C")
-    opt_s0 = Option(forward=100.0, strike=100.0, tau=1.0, vol=0.0, df=0.95, cp="C")
+    opt_t0 = Black76Option(forward=100.0, strike=100.0, tau=0.0, vol=0.2, df=0.95, cp="C")
+    opt_s0 = Black76Option(forward=100.0, strike=100.0, tau=1.0, vol=0.0, df=0.95, cp="C")
 
     assert vega(opt_t0) == 0.0
     assert vega(opt_s0) == 0.0

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from .types import Option
+from .types import Black76Option
 
 
 def _norm_cdf(x: float) -> float:
@@ -18,7 +18,7 @@ def _intrinsic_forward(F: float, K: float, cp: str) -> float:
     return max(K - F, 0.0)
 
 
-def price(opt: Option) -> float:
+def price(opt: Black76Option) -> float:
     """
     Black-76 (forward BS) European option price.
 

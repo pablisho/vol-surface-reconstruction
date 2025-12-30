@@ -3,7 +3,7 @@ import math
 import pytest
 
 from pricing.black76 import price
-from pricing.types import Option
+from pricing.types import Black76Option
 
 
 def test_put_call_parity_forward_black76():
@@ -18,8 +18,8 @@ def test_put_call_parity_forward_black76():
     r = 0.05
     DF = math.exp(-r * T)
 
-    call = Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="C")
-    put = Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="P")
+    call = Black76Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="C")
+    put = Black76Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="P")
 
     lhs = price(call) - price(put)
     rhs = DF * (F - K)
@@ -37,8 +37,8 @@ def test_expiry_returns_discounted_intrinsic():
     sigma = 0.3
     DF = 0.97
 
-    call = Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="C")
-    put = Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="P")
+    call = Black76Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="C")
+    put = Black76Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="P")
 
     assert price(call) == pytest.approx(DF * max(F - K, 0.0))
     assert price(put) == pytest.approx(DF * max(K - F, 0.0))
@@ -54,8 +54,8 @@ def test_zero_vol_returns_discounted_intrinsic():
     sigma = 0.0
     DF = 0.9
 
-    call = Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="C")
-    put = Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="P")
+    call = Black76Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="C")
+    put = Black76Option(forward=F, strike=K, tau=T, vol=sigma, df=DF, cp="P")
 
     assert price(call) == pytest.approx(DF * max(F - K, 0.0))
     assert price(put) == pytest.approx(DF * max(K - F, 0.0))
@@ -65,5 +65,5 @@ def test_price_is_non_negative():
     """
     Vanilla option prices should never be negative.
     """
-    opt = Option(forward=100.0, strike=100.0, tau=1.0, vol=0.2, df=0.95, cp="C")
+    opt = Black76Option(forward=100.0, strike=100.0, tau=1.0, vol=0.2, df=0.95, cp="C")
     assert price(opt) >= 0.0

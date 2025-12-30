@@ -5,7 +5,7 @@ import pytest
 
 from pricing.black76 import price
 from pricing.implied_vol import implied_vol, implied_vol_newton
-from pricing.types import Option
+from pricing.types import Black76Option
 
 
 def test_newton_recovers_sigma_call_matches_bisection():
@@ -13,10 +13,10 @@ def test_newton_recovers_sigma_call_matches_bisection():
     sigma_true = 0.35
     DF = math.exp(-0.04 * T)
 
-    opt_true = Option(forward=F, strike=K, tau=T, vol=sigma_true, df=DF, cp="C")
+    opt_true = Black76Option(forward=F, strike=K, tau=T, vol=sigma_true, df=DF, cp="C")
     mkt = price(opt_true)
 
-    opt_guess = Option(forward=F, strike=K, tau=T, vol=0.2, df=DF, cp="C")
+    opt_guess = Black76Option(forward=F, strike=K, tau=T, vol=0.2, df=DF, cp="C")
 
     sig_n = implied_vol_newton(opt_guess, mkt, vol_upper=1.0)
     sig_b = implied_vol(opt_guess, mkt, vol_upper=1.0)
@@ -33,10 +33,10 @@ def test_newton_recovers_sigma_put_matches_bisection():
     sigma_true = 0.22
     DF = math.exp(-0.03 * T)
 
-    opt_true = Option(forward=F, strike=K, tau=T, vol=sigma_true, df=DF, cp="P")
+    opt_true = Black76Option(forward=F, strike=K, tau=T, vol=sigma_true, df=DF, cp="P")
     mkt = price(opt_true)
 
-    opt_guess = Option(forward=F, strike=K, tau=T, vol=0.5, df=DF, cp="P")
+    opt_guess = Black76Option(forward=F, strike=K, tau=T, vol=0.5, df=DF, cp="P")
 
     sig_n = implied_vol_newton(opt_guess, mkt, vol_upper=1.0)
     sig_b = implied_vol(opt_guess, mkt, vol_upper=1.0)
@@ -53,10 +53,10 @@ def test_newton_fallback_still_returns_solution_when_max_iter_too_small():
     sigma_true = 0.4
     DF = math.exp(-0.01 * T)
 
-    opt_true = Option(forward=F, strike=K, tau=T, vol=sigma_true, df=DF, cp="C")
+    opt_true = Black76Option(forward=F, strike=K, tau=T, vol=sigma_true, df=DF, cp="C")
     mkt = price(opt_true)
 
-    opt_guess = Option(forward=F, strike=K, tau=T, vol=0.2, df=DF, cp="C")
+    opt_guess = Black76Option(forward=F, strike=K, tau=T, vol=0.2, df=DF, cp="C")
 
     # Force Newton to "fail" quickly; fallback should rescue
     sig = implied_vol_newton(opt_guess, mkt, vol_upper=1.0, max_iter=1, fallback_to_bisection=True)

@@ -8,7 +8,7 @@ CallPut = Literal["C", "P"]
 
 
 @dataclass(frozen=True, slots=True)
-class Option:
+class Black76Option:
     """
     Black-76 / forward Black-Scholes model inputs.
 
