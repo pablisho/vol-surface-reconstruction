@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .black76 import price as black76_price
+from .greeks import vega as black76_vega
 from .types import Option
 
 DEFAULT_TOL = 1e-10
@@ -144,3 +145,113 @@ def implied_vol(
         )
 
     return 0.5 * (lo + hi)
+
+
+def implied_vol_newton(
+    opt: Option,
+    target_price: float,
+    *,
+    sigma0: float | None = None,
+    vol_lower: float = 0.0,
+    vol_upper: float = 2.0,
+    price_tol: float = 1e-12,
+    vol_tol: float = 1e-12,
+    max_iter: int = 50,
+    fallback_to_bisection: bool = True,
+) -> float:
+    """
+    Black-76 implied volatility using Newton-Raphson with vega.
+
+    Fast when it converges; can fail for extreme moneyness / tiny T / tiny vega.
+    Optionally falls back to bisection for robustness.
+    """
+    if target_price < 0.0:
+        raise ImpliedVolError(f"target_price must be >= 0, got {target_price}")
+
+    if opt.tau == 0.0:
+        intrinsic_ud, _ = _undiscounted_bounds(opt)
+        intrinsic = opt.df * intrinsic_ud
+        if abs(target_price - intrinsic) <= price_tol:
+            return 0.0
+        raise ImpliedVolError("tau=0: implied vol is not defined unless price equals intrinsic")
+
+    # No-arbitrage bounds (same as bisection version)
+    target_ud = target_price / opt.df
+    lb_ud, ub_ud = _undiscounted_bounds(opt)
+    if target_ud < lb_ud - 1e-14 or target_ud > ub_ud + 1e-14:
+        raise ImpliedVolError(
+            f"target price out of bounds: target_ud={target_ud:.16g}, "
+            f"bounds=[{lb_ud:.16g}, {ub_ud:.16g}]"
+        )
+    if abs(target_ud - lb_ud) <= price_tol:
+        return 0.0
+
+    # Initial guess
+    sigma = sigma0 if sigma0 is not None else max(0.2, 0.5 * (vol_lower + vol_upper))
+    sigma = max(vol_lower, min(sigma, vol_upper))
+
+    lo = max(vol_lower, 0.0)
+    hi = max(vol_upper, lo + 1e-12)
+
+    def p(s: float) -> float:
+        return black76_price(replace(opt, vol=s))
+
+    # Make sure upper brackets (same expansion logic as bisection)
+    phi = p(hi)
+    cap = 10.0
+    expand_iter = 0
+    while phi < target_price - price_tol and hi < cap and expand_iter < 60:
+        hi *= 2.0
+        phi = p(hi)
+        expand_iter += 1
+    if phi < target_price - price_tol:
+        raise ImpliedVolError(
+            f"could not bracket implied vol: price(vol={hi})={phi} < target_price={target_price}"
+        )
+
+    # Newton iterations, constrained to [lo, hi]
+    for _ in range(max_iter):
+        opt_sigma = replace(opt, vol=sigma)
+        px = black76_price(opt_sigma)
+        err = px - target_price
+
+        if abs(err) <= price_tol:
+            return sigma
+
+        v = black76_vega(opt_sigma)
+
+        # If vega is too small, Newton step is unreliable
+        if v <= 1e-14:
+            break
+
+        step = err / v
+        sigma_new = sigma - step
+
+        # Keep it bracketed; if outside, damp / project
+        if sigma_new <= lo or sigma_new >= hi:
+            sigma_new = 0.5 * (lo + hi)
+
+        # Update bracket using monotonicity in sigma
+        if px < target_price:
+            lo = max(lo, sigma)
+        else:
+            hi = min(hi, sigma)
+
+        if abs(sigma_new - sigma) <= vol_tol:
+            return sigma_new
+
+        sigma = sigma_new
+
+    # If Newton didn't converge, fall back
+    if fallback_to_bisection:
+        return implied_vol(
+            opt,
+            target_price,
+            vol_lower=vol_lower,
+            vol_upper=hi,
+            price_tol=price_tol,
+            vol_tol=vol_tol,
+            max_iter=200,
+        )
+
+    raise ImpliedVolError("Newton implied vol did not converge and fallback_to_bisection=False")
