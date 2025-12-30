@@ -27,6 +27,67 @@ def _undiscounted_bounds(opt: Option) -> tuple[float, float]:
     return intrinsic, upper
 
 
+def _validate_inputs_bounds(
+    opt: Option,
+    target_price: float,
+    *,
+    price_tol: float,
+) -> None:
+    if opt.tau < 0.0:
+        raise ImpliedVolError("opt.tau must be >= 0")
+
+    if opt.df <= 0.0:
+        raise ImpliedVolError("opt.df must be > 0")
+
+    if target_price < 0.0:
+        raise ImpliedVolError(f"target_price must be >= 0, got {target_price}")
+
+    target_ud = target_price / opt.df
+    lb_ud, ub_ud = _undiscounted_bounds(opt)
+    if target_ud < lb_ud - 1e-14 or target_ud > ub_ud + 1e-14:
+        raise ImpliedVolError(
+            f"target price out of bounds: target_ud={target_ud:.16g}, "
+            f"bounds=[{lb_ud:.16g}, {ub_ud:.16g}]"
+        )
+
+    if opt.tau == 0.0 and abs(target_ud - lb_ud) > price_tol:
+        raise ImpliedVolError("tau=0: implied vol is not defined unless price equals intrinsic")
+
+
+def _is_intrinsic_price(
+    opt: Option,
+    target_price: float,
+    *,
+    price_tol: float,
+) -> bool:
+    target_ud = target_price / opt.df
+    lb_ud, _ub_ud = _undiscounted_bounds(opt)
+    return abs(target_ud - lb_ud) <= price_tol
+
+
+def _ensure_bracketed(
+    price_fn,
+    target_price: float,
+    hi: float,
+    *,
+    price_tol: float,
+    cap: float = 10.0,
+) -> float:
+    phi = price_fn(hi)
+    expand_iter = 0
+    while phi < target_price - price_tol and hi < cap and expand_iter < 60:
+        hi *= 2.0
+        phi = price_fn(hi)
+        expand_iter += 1
+
+    if phi < target_price - price_tol:
+        raise ImpliedVolError(
+            f"could not bracket implied vol: price(vol={hi})={phi} < target_price={target_price}"
+        )
+
+    return hi
+
+
 def implied_vol(
     opt: Option,
     target_price: float,
@@ -63,36 +124,8 @@ def implied_vol(
     ------
     ImpliedVolError if target_price is outside no-arbitrage bounds or cannot be bracketed.
     """
-    if target_price < 0.0:
-        raise ImpliedVolError(f"target_price must be >= 0, got {target_price}")
-
-    if opt.tau < 0.0:
-        raise ImpliedVolError("opt.tau must be >= 0")
-
-    # If expiry: implied vol is not identifiable; return 0 if price equals intrinsic, else error.
-    if opt.tau == 0.0:
-        intrinsic_ud, _upper_ud = _undiscounted_bounds(opt)
-        intrinsic = opt.df * intrinsic_ud
-        if abs(target_price - intrinsic) <= price_tol:
-            return 0.0
-        raise ImpliedVolError("tau=0: implied vol is not defined unless price equals intrinsic")
-
-    if opt.df <= 0.0:
-        raise ImpliedVolError("opt.df must be > 0")
-
-    # Convert to undiscounted to check bounds independent of DF.
-    target_ud = target_price / opt.df
-    lb_ud, ub_ud = _undiscounted_bounds(opt)
-
-    # Basic no-arbitrage check (allow tiny numerical slack).
-    if target_ud < lb_ud - 1e-14 or target_ud > ub_ud + 1e-14:
-        raise ImpliedVolError(
-            f"target price out of bounds: target_ud={target_ud:.16g}, "
-            f"bounds=[{lb_ud:.16g}, {ub_ud:.16g}]"
-        )
-
-    # If at intrinsic (or extremely close): implied vol is 0.
-    if abs(target_ud - lb_ud) <= price_tol:
+    _validate_inputs_bounds(opt, target_price, price_tol=price_tol)
+    if _is_intrinsic_price(opt, target_price, price_tol=price_tol):
         return 0.0
 
     # Helper: price at a given sigma (discounted)
@@ -103,21 +136,9 @@ def implied_vol(
     lo = max(vol_lower, 0.0)
     hi = max(vol_upper, lo + DEFAULT_TOL)
 
-    phi = p(hi)
-
     # Ensure target is bracketed: for vanilla options, price increases with sigma.
     # Expand hi until phi >= target or we hit a cap.
-    cap = 10.0  # 1000% vol cap is generous; beyond that something is off anyway.
-    expand_iter = 0
-    while phi < target_price - price_tol and hi < cap and expand_iter < 60:
-        hi *= 2.0
-        phi = p(hi)
-        expand_iter += 1
-
-    if phi < target_price - price_tol:
-        raise ImpliedVolError(
-            f"could not bracket implied vol: price(vol={hi})={phi} < target_price={target_price}"
-        )
+    hi = _ensure_bracketed(p, target_price, hi, price_tol=price_tol)
 
     # Bisection
     for _ in range(max_iter):
@@ -165,25 +186,8 @@ def implied_vol_newton(
     Fast when it converges; can fail for extreme moneyness / tiny T / tiny vega.
     Optionally falls back to bisection for robustness.
     """
-    if target_price < 0.0:
-        raise ImpliedVolError(f"target_price must be >= 0, got {target_price}")
-
-    if opt.tau == 0.0:
-        intrinsic_ud, _ = _undiscounted_bounds(opt)
-        intrinsic = opt.df * intrinsic_ud
-        if abs(target_price - intrinsic) <= price_tol:
-            return 0.0
-        raise ImpliedVolError("tau=0: implied vol is not defined unless price equals intrinsic")
-
-    # No-arbitrage bounds (same as bisection version)
-    target_ud = target_price / opt.df
-    lb_ud, ub_ud = _undiscounted_bounds(opt)
-    if target_ud < lb_ud - 1e-14 or target_ud > ub_ud + 1e-14:
-        raise ImpliedVolError(
-            f"target price out of bounds: target_ud={target_ud:.16g}, "
-            f"bounds=[{lb_ud:.16g}, {ub_ud:.16g}]"
-        )
-    if abs(target_ud - lb_ud) <= price_tol:
+    _validate_inputs_bounds(opt, target_price, price_tol=price_tol)
+    if _is_intrinsic_price(opt, target_price, price_tol=price_tol):
         return 0.0
 
     # Initial guess
@@ -197,17 +201,7 @@ def implied_vol_newton(
         return black76_price(replace(opt, vol=s))
 
     # Make sure upper brackets (same expansion logic as bisection)
-    phi = p(hi)
-    cap = 10.0
-    expand_iter = 0
-    while phi < target_price - price_tol and hi < cap and expand_iter < 60:
-        hi *= 2.0
-        phi = p(hi)
-        expand_iter += 1
-    if phi < target_price - price_tol:
-        raise ImpliedVolError(
-            f"could not bracket implied vol: price(vol={hi})={phi} < target_price={target_price}"
-        )
+    hi = _ensure_bracketed(p, target_price, hi, price_tol=price_tol)
 
     # Newton iterations, constrained to [lo, hi]
     for _ in range(max_iter):
