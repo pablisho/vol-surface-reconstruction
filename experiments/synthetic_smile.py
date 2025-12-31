@@ -13,13 +13,6 @@ def _print_table_header() -> None:
     print("  ------  ---------  --------")
 
 
-def _linspace(start: float, stop: float, num: int) -> list[float]:
-    if num <= 1:
-        return [start]
-    step = (stop - start) / (num - 1)
-    return [start + step * i for i in range(num)]
-
-
 def _parse_float_list(value: str) -> list[float]:
     return [float(item.strip()) for item in value.split(",") if item.strip()]
 
@@ -45,39 +38,20 @@ def _parse_args() -> argparse.Namespace:
         default="0.25,0.5,1.0,2.0",
         help="Comma-separated list of taus.",
     )
+    parser.add_argument("--strike-min", type=float, default=60.0, help="Min strike for a range.")
+    parser.add_argument("--strike-max", type=float, default=140.0, help="Max strike for a range.")
     parser.add_argument(
-        "--strike-table",
-        default="60,70,80,90,95,100,105,110,120,130,140",
-        help="Comma-separated list of strikes for the table.",
-    )
-    parser.add_argument("--strike-min", type=float, default=None, help="Min strike for a range.")
-    parser.add_argument("--strike-max", type=float, default=None, help="Max strike for a range.")
-    parser.add_argument(
-        "--strike-step", type=float, default=None, help="Step size for a strike range."
+        "--strike-step", type=float, default=10.0, help="Step size for a strike range."
     )
     args = parser.parse_args()
-
-    range_args = (args.strike_min, args.strike_max, args.strike_step)
-    if any(value is not None for value in range_args) and any(
-        value is None for value in range_args
-    ):
-        parser.error("--strike-min/--strike-max/--strike-step must be provided together.")
-
     return args
 
 
-def _resolve_strikes(args: argparse.Namespace) -> list[float]:
-    if args.strike_min is None:
-        strikes = _parse_float_list(args.strike_table)
-        if not strikes:
-            raise ValueError("strike table is empty")
-        return strikes
-
-    if args.strike_step <= 0:
+def _validate_strike_range(strike_min: float, strike_max: float, strike_step: float) -> None:
+    if strike_step <= 0:
         raise ValueError("strike-step must be positive")
-    if args.strike_max < args.strike_min:
+    if strike_max < strike_min:
         raise ValueError("strike-max must be >= strike-min")
-    return _build_strike_range(args.strike_min, args.strike_max, args.strike_step)
 
 
 def _print_setup(
@@ -87,8 +61,10 @@ def _print_setup(
     weight: float,
     sigma1: float,
     sigma2: float,
-    strikes_table: list[float],
     cp: str,
+    strike_min: float,
+    strike_max: float,
+    strike_step: float,
 ) -> None:
     print("Setup")
     print(f"  forward: {forward:.6f}")
@@ -98,7 +74,9 @@ def _print_setup(
     print(f"  sigma1: {sigma1:.6f}")
     print(f"  sigma2: {sigma2:.6f}")
     print(f"  cp: {cp}")
-    print(f"  strikes: {', '.join(f'{k:.1f}' for k in strikes_table)}")
+    print(f"  strike_min: {strike_min:.1f}")
+    print(f"  strike_max: {strike_max:.1f}")
+    print(f"  strike_step: {strike_step:.1f}")
 
 
 def _mixed_price(
@@ -118,36 +96,32 @@ def _compute_prices_and_iv_smile(
     rate: float,
     cp: str,
     tau: float,
-    strikes_table: list[float],
     strike_grid: list[float],
     sigma1: float,
     sigma2: float,
     weight: float,
-) -> tuple[list[tuple[float, float, float]], list[float], list[float]]:
+) -> tuple[list[float], list[float]]:
     df = math.exp(-rate * tau)
     env = MarketEnv(forward=forward, df=df)
 
-    table_rows = []
-    for strike in strikes_table:
-        contract = VanillaContract(strike=strike, tau=tau, cp=cp)
-        px_mix = _mixed_price(env, contract, sigma1, sigma2, weight)
-        iv_rec = _recover_iv(env, contract, px_mix)
-        table_rows.append((strike, px_mix, iv_rec))
-
-    recovered_plot = []
-    prices_plot = []
+    iv_smile = []
+    price_curve = []
     for strike in strike_grid:
         contract = VanillaContract(strike=strike, tau=tau, cp=cp)
         px_mix = _mixed_price(env, contract, sigma1, sigma2, weight)
         iv_rec = _recover_iv(env, contract, px_mix)
-        recovered_plot.append(iv_rec)
-        prices_plot.append(px_mix)
+        iv_smile.append(iv_rec)
+        price_curve.append(px_mix)
 
-    return table_rows, recovered_plot, prices_plot
+    return iv_smile, price_curve
 
 
-def _print_table_rows(table_rows: list[tuple[float, float, float]]) -> None:
-    for strike, px_mix, iv_rec in table_rows:
+def _print_table_rows(
+    strikes_table: list[float],
+    iv_smile: list[float],
+    price_curve: list[float],
+) -> None:
+    for strike, px_mix, iv_rec in zip(strikes_table, price_curve, iv_smile, strict=False):
         print(f"  {strike:6.1f}  {px_mix:9.6f}  {iv_rec:8.6f}")
 
 
@@ -189,15 +163,21 @@ def main() -> None:
     cp = args.cp.upper()
     if cp not in ("C", "P"):
         raise SystemExit("error: --cp must be C or P")
+    strike_min = args.strike_min
+    strike_max = args.strike_max
+    strike_step = args.strike_step
     try:
-        strikes_table = _resolve_strikes(args)
+        _validate_strike_range(strike_min, strike_max, strike_step)
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
-    plot_points = (len(strikes_table) - 1) * 10 + 1
-    strike_grid = _linspace(strikes_table[0], strikes_table[-1], plot_points)
+    plot_step = strike_step / 10.0
+    strike_grid = _build_strike_range(strike_min, strike_max, plot_step)
+    strikes_table = strike_grid[::10]
     out_dir = "experiments/out"
 
-    _print_setup(forward, taus, rate, weight, sigma1, sigma2, strikes_table, cp)
+    _print_setup(
+        forward, taus, rate, weight, sigma1, sigma2, cp, strike_min, strike_max, strike_step
+    )
 
     iv_smiles_by_tau: dict[float, list[tuple[float, float]]] = {}
     price_curves_by_tau: dict[float, list[tuple[float, float]]] = {}
@@ -209,18 +189,19 @@ def main() -> None:
     for tau in taus:
         print(f"  tau={tau:.2f}")
         _print_table_header()
-        table_quotes, iv_smile, price_curve = _compute_prices_and_iv_smile(
+        iv_smile, price_curve = _compute_prices_and_iv_smile(
             forward=forward,
             rate=rate,
             cp=cp,
             tau=tau,
-            strikes_table=strikes_table,
             strike_grid=strike_grid,
             sigma1=sigma1,
             sigma2=sigma2,
             weight=weight,
         )
-        _print_table_rows(table_quotes)
+        table_iv_smile = iv_smile[::10]
+        table_price_curve = price_curve[::10]
+        _print_table_rows(strikes_table, table_iv_smile, table_price_curve)
 
         iv_smiles_by_tau[tau] = list(zip(log_moneyness_grid, iv_smile, strict=False))
         price_curves_by_tau[tau] = list(zip(strike_grid, price_curve, strict=False))
