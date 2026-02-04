@@ -60,7 +60,8 @@ def main() -> None:
 
     import matplotlib.pyplot as plt
 
-    os.makedirs("experiments/out", exist_ok=True)
+    out_dir = "experiments/out/flat_smile"
+    os.makedirs(out_dir, exist_ok=True)
 
     log_moneyness = [math.log(k / F) for k in strikes]
 
@@ -71,7 +72,7 @@ def main() -> None:
     plt.ylabel("Implied vol")
     plt.legend()
     plt.grid(True)
-    plt.savefig("experiments/out/flat_smile_iv.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{out_dir}/iv.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     plt.figure()
@@ -81,7 +82,7 @@ def main() -> None:
     plt.ylabel("Implied vol")
     plt.legend()
     plt.grid(True)
-    plt.savefig("experiments/out/flat_smile_iv_logm.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{out_dir}/iv_logm.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     plt.figure()
@@ -91,7 +92,7 @@ def main() -> None:
     plt.ylabel("Price")
     plt.legend()
     plt.grid(True)
-    plt.savefig("experiments/out/flat_smile_price.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{out_dir}/price.png", dpi=150, bbox_inches="tight")
     plt.close()
 
 

@@ -25,7 +25,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["pricing", "volsurface"]
+known-first-party = ["pricing", "volsurface", "data"]
 
 [tool.black]
 line-length = 100

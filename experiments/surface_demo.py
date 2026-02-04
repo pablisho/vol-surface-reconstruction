@@ -58,7 +58,7 @@ def main() -> None:
     print(f"  shape: {surf.shape}  (n_taus={surf.n_taus}, n_strikes={surf.n_strikes})")
     print(f"  IV range: [{surf.ivs.min():.4f}, {surf.ivs.max():.4f}]")
 
-    out_dir = "experiments/out"
+    out_dir = "experiments/out/surface_demo"
     os.makedirs(out_dir, exist_ok=True)
 
     # --- Import plotting lazily ---

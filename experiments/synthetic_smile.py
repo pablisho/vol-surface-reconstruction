@@ -173,7 +173,7 @@ def main() -> None:
     plot_step = strike_step / 10.0
     strike_grid = _build_strike_range(strike_min, strike_max, plot_step)
     strikes_table = strike_grid[::10]
-    out_dir = "experiments/out"
+    out_dir = "experiments/out/synthetic_smile"
 
     _print_setup(
         forward, taus, rate, weight, sigma1, sigma2, cp, strike_min, strike_max, strike_step
