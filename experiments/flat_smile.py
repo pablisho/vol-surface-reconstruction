@@ -65,11 +65,16 @@ def main() -> None:
 
     log_moneyness = [math.log(k / F) for k in strikes]
 
+    iv_margin = 0.05 * sigma_true  # 5% padding around the true value
+    iv_ylim = (sigma_true - iv_margin, sigma_true + iv_margin)
+
     plt.figure()
     plt.plot(strikes, ivs_by_cp["C"], label="Call")
     plt.plot(strikes, ivs_by_cp["P"], label="Put")
+    plt.axhline(sigma_true, color="gray", linestyle="--", linewidth=0.8, label="True σ")
     plt.xlabel("Strike")
     plt.ylabel("Implied vol")
+    plt.ylim(iv_ylim)
     plt.legend()
     plt.grid(True)
     plt.savefig(f"{out_dir}/iv.png", dpi=150, bbox_inches="tight")
@@ -78,8 +83,10 @@ def main() -> None:
     plt.figure()
     plt.plot(log_moneyness, ivs_by_cp["C"], label="Call")
     plt.plot(log_moneyness, ivs_by_cp["P"], label="Put")
+    plt.axhline(sigma_true, color="gray", linestyle="--", linewidth=0.8, label="True σ")
     plt.xlabel("Log moneyness")
     plt.ylabel("Implied vol")
+    plt.ylim(iv_ylim)
     plt.legend()
     plt.grid(True)
     plt.savefig(f"{out_dir}/iv_logm.png", dpi=150, bbox_inches="tight")
