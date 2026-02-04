@@ -7,7 +7,7 @@ dependencies = []
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
+addopts = ""
 
 [tool.ruff]
 line-length = 100
@@ -25,7 +25,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["pricing"]
+known-first-party = ["pricing", "volsurface"]
 
 [tool.black]
 line-length = 100
