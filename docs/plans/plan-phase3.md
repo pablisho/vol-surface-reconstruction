@@ -20,21 +20,62 @@ The MLP baseline model is intentionally simple — the goal is to validate the p
 - `training/` — training loop, config, checkpointing
 - `evaluation/` — reconstruction metrics
 
+## Data Strategy: Generate Once, Load for Training
+
+Heston pricing is expensive (Gil-Pelaez quadrature + IV recovery per grid point). For 500 surfaces on a 20x30 grid, generation takes ~10+ minutes. We don't want to pay this cost every training run.
+
+**Approach**:
+1. A standalone **generation script** produces surfaces and saves them to disk as NPZ files
+2. `VolSurfaceDataset` **loads from disk** — fast, instant startup
+3. **Masks are applied on-the-fly** in `__getitem__` — each epoch sees different masking patterns, but the underlying surfaces are fixed
+
+This means you can iterate on model/training hyperparameters without regenerating data. Reproducibility is guaranteed by the saved files.
+
+**Storage layout**:
+```
+data/synthetic/generated/
+  train/
+    metadata.json          # grid params, Heston params per surface, seed
+    surfaces.npz           # stacked IVs array (n_surfaces, n_taus, n_strikes)
+  val/
+    metadata.json
+    surfaces.npz
+```
+
 ## File Plan
 
-### 1. `data/datasets.py` — VolSurfaceDataset (~80 lines)
+### 1. `data/datasets.py` — VolSurfaceDataset + generation helpers (~120 lines)
 
-PyTorch Dataset that wraps `generate_heston_dataset()`.
+**`generate_and_save()`**: Standalone function that generates Heston surfaces and saves to disk.
+
+```python
+def generate_and_save(
+    output_dir: str,
+    n_surfaces: int,
+    forward: float,
+    strikes: np.ndarray,
+    taus: np.ndarray,
+    seed: int,
+    *,
+    rate: float = 0.0,
+    enforce_feller: bool = True,
+) -> None:
+    """Generate Heston surfaces and save to output_dir as NPZ + metadata."""
+```
+
+Calls `generate_heston_dataset()`, saves stacked IVs as `surfaces.npz` and grid params + HestonParams as `metadata.json`.
+
+**`VolSurfaceDataset`**: PyTorch Dataset that loads from disk.
 
 ```python
 class VolSurfaceDataset(torch.utils.data.Dataset):
-    """Pre-generates Heston surfaces, applies on-the-fly masking."""
+    """Loads pre-generated surfaces from disk, applies on-the-fly masking."""
 ```
 
-**Constructor**: Takes `n_surfaces`, grid params (forward, strikes, taus), mask config, rng seed. Calls `generate_heston_dataset()` once at init and stores the list of VolSurface objects.
+**Constructor**: Takes `data_dir` (path to saved surfaces) and `mask_config`. Loads `surfaces.npz` and `metadata.json`.
 
 **`__getitem__`**: For surface `i`:
-1. Retrieve stored VolSurface
+1. Retrieve stored IVs array
 2. Generate a fresh random mask (on-the-fly, so each epoch sees different masks)
 3. Build input tensor: masked IVs (missing → 0.0) + mask channel → shape `(2, n_taus, n_strikes)`
 4. Build target tensor: full IVs → shape `(1, n_taus, n_strikes)`
@@ -45,6 +86,20 @@ class VolSurfaceDataset(torch.utils.data.Dataset):
 **Mask config**: Dataclass `MaskConfig` with fields for mask type (random/wing/combined), missing fraction, and wing threshold. Defaults to random mask with 30% missing.
 
 Reuses: `data/synthetic/heston_surface.py:generate_heston_dataset()`, `volsurface/masking.py:random_mask()`, `volsurface/masking.py:wing_mask()`, `volsurface/masking.py:combined_mask()`
+
+### 1b. `experiments/generate_dataset.py` — Dataset generation script (~50 lines)
+
+```python
+def main():
+    # 1. Define grid (strikes, taus, forward)
+    # 2. Generate train split (500 surfaces, seed=42)
+    # 3. Generate val split (100 surfaces, seed=123)
+    # 4. Save to data/synthetic/generated/{train,val}/
+```
+
+**Usage**: `python -m experiments.generate_dataset`
+
+Run once before training. Subsequent training runs load from disk instantly.
 
 ### 2. `models/__init__.py` — Package marker (~1 line)
 
@@ -79,13 +134,10 @@ Architecture: Linear → ReLU → Linear → ReLU → Linear. No dropout, no bat
 ```python
 @dataclass(frozen=True)
 class TrainConfig:
-    n_train: int = 500          # training surfaces
-    n_val: int = 100            # validation surfaces
     batch_size: int = 32
     lr: float = 1e-3
     epochs: int = 100
     patience: int = 10          # early stopping patience
-    checkpoint_dir: str = "experiments/out/checkpoints"
     device: str = "cpu"
 ```
 
@@ -135,14 +187,14 @@ Separate observed vs missing metrics are critical — the model should be good a
 
 ```python
 def main():
-    # 1. Create datasets
+    # 1. Load pre-generated datasets from data/synthetic/generated/
     # 2. Create MLP model
     # 3. Train
     # 4. Evaluate on val set
     # 5. Print metrics, save loss curves
 ```
 
-**Usage**: `python -m experiments.train_baseline`
+**Usage**: `python -m experiments.generate_dataset` (once), then `python -m experiments.train_baseline`
 
 **Output** to `experiments/out/train_baseline/`:
 - `loss_curve.png` — train/val loss over epochs
@@ -184,11 +236,12 @@ def main():
 
 ## File Count
 
-~14 new files, ~600 lines of implementation + ~150 lines of tests.
+~15 new files, ~650 lines of implementation + ~150 lines of tests.
 
 ## Verification
 
 1. `python -m pytest` — all existing 114 + new tests pass
 2. `python -m ruff check .` — no lint errors
-3. `python -m experiments.train_baseline` — runs E2E, produces loss curve + metrics + sample reconstruction plot
-4. Visual check: loss curve shows decreasing trend, sample reconstruction looks reasonable (even if not great — it's an MLP baseline)
+3. `python -m experiments.generate_dataset` — generates train/val surfaces to disk
+4. `python -m experiments.train_baseline` — loads data, trains MLP, produces loss curve + metrics + sample reconstruction plot
+5. Visual check: loss curve shows decreasing trend, sample reconstruction looks reasonable (even if not great — it's an MLP baseline)
