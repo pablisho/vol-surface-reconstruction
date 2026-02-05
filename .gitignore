@@ -1,6 +1,9 @@
 # Experiments results
 experiments/out
 
+# Generated datasets (large, reproducible from seed)
+data/synthetic/generated/
+
 # swp files
 *.swp
 
