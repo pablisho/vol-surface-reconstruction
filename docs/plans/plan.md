@@ -71,13 +71,16 @@ See `docs/phase2.md` for summary.
 
 ---
 
-## Phase 3: E2E Training Infrastructure  ← CURRENT
+## Phase 3: E2E Training Infrastructure  ✓ DONE
 
-**Why now**: Get a working ML pipeline end-to-end on synthetic data before adding model complexity. The MLP baseline validates the entire data→train→evaluate flow.
+**Deliverables**: `data/datasets.py`, `models/` (base + MLP + CNN + U-Net), `training/`, `evaluation/metrics.py`, `experiments/train_baseline.py` + tests (30 tests, 154 total)
 
-**Deliverables**: `data/datasets.py`, `models/` (base + MLP), `training/`, `evaluation/metrics.py`, `experiments/train_baseline.py` + tests
+- Dataset: generate-once-save-to-disk (NPZ+JSON), on-the-fly masking for augmentation
+- Three baselines: MLP (219k params), CNN (226k), U-Net (250k) — all implement `SurfaceReconstructor` ABC
+- CNN and U-Net achieve RMSE missing ~0.005 (~0.5 vol points), halving MLP's error
+- Ablation showed residual connections hurt missing-point reconstruction
 
-See `docs/plans/plan-phase3.md` for detailed file plan.
+See `docs/phase3.md` for summary.
 
 ---
 
@@ -221,7 +224,7 @@ Extend `data/datasets.py` to support real data sources alongside Heston syntheti
 ```
 Phase 1 (VolSurface) ✓
   └→ Phase 2 (Heston) ✓
-      └→ Phase 3 (E2E Training Infra) ← current
+      └→ Phase 3 (E2E Training Infra) ✓
           ├→ Phase 4 (VAE)
           │   └→ Phase 5 (Transformer) ──┐
           │                               ├→ Phase 9 (Evaluation) → Phase 10
