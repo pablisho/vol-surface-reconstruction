@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import torch
@@ -38,7 +39,10 @@ def train(
     best_val_loss = float("inf")
     patience_counter = 0
 
+    t_start = time.perf_counter()
+
     for epoch in range(config.epochs):
+        t_epoch = time.perf_counter()
         # --- Train ---
         model.train()
         train_loss_sum = 0.0
@@ -85,13 +89,15 @@ def train(
         history["val_loss"].append(avg_val)
 
         # --- Logging ---
+        epoch_sec = time.perf_counter() - t_epoch
         marker = ""
         if avg_val < best_val_loss:
             marker = " *"
 
         print(
             f"  Epoch {epoch + 1:3d}/{config.epochs}"
-            f"  train={avg_train:.6f}  val={avg_val:.6f}{marker}"
+            f"  train={avg_train:.6f}  val={avg_val:.6f}"
+            f"  ({epoch_sec:.1f}s){marker}"
         )
 
         # --- Early stopping + checkpointing ---
@@ -107,5 +113,8 @@ def train(
             if patience_counter >= config.patience:
                 print(f"  Early stopping at epoch {epoch + 1} (patience={config.patience})")
                 break
+
+    total_sec = time.perf_counter() - t_start
+    print(f"  Total training time: {total_sec:.1f}s ({total_sec / 60:.1f}m)")
 
     return history

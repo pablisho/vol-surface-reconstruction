@@ -98,44 +98,19 @@ See `docs/phase4.md` for summary.
 
 ---
 
-## Phase 5: Transformer Autoencoder (Main Contribution)
+## Phase 5: Transformer Autoencoder (Main Contribution)  ✓ DONE
 
 **Why**: Core thesis contribution — the novel architecture.
 
-**Deliverables**: `models/transformer/` + `experiments/train_transformer.py` + `experiments/ablation.py` + tests
+**Deliverables**: `models/transformer/` (positional.py, model.py), updated `experiments/train_baseline.py`, `tests/test_transformer.py` + tests (21 tests, 203 total)
 
-### Architecture: Transformer Autoencoder for 2D Grids
+- MAE-style encoder-decoder: sinusoidal coordinate encoding, self-attention encoder with masking, cross-attention decoder
+- Decoder receives partial IV values (observed + zero for missing) and refines via attention
+- d_model=64, 3 encoder + 2 decoder layers, GELU, pre-norm, 288k params
+- At matched params (~280k): transformer RMSE_missing=0.0044, U-Net=0.0052 (18% better)
+- At best config: matches U-Net (0.0044 vs 0.0043) with 40% fewer parameters
 
-Vol surfaces are 2D grids (strike x tau), not sequences. Grids are small (~20 taus x ~30 strikes = 600 points), so each grid point is a token.
-
-```
-Encoder:
-  Input: observed (log_moneyness, tau, IV) triples
-  → Linear embedding to d_model
-  → Add 2D positional encoding
-  → N transformer encoder layers (self-attention over observed tokens)
-  → Bottleneck: aggregate to latent representation z
-
-Decoder:
-  → Expand z + positional encoding for all grid positions (observed + missing)
-  → M transformer decoder layers (cross-attention to encoder output)
-  → Linear projection → predicted IV at each grid point
-```
-
-**Key design decisions**:
-1. **Bottleneck**: Mean-pooling vs learnable latent tokens vs variational
-2. **MAE-style vs full autoencoder**: Start with MAE-style (encode only observed)
-3. **Positional encoding**: Sinusoidal vs learnable for (log_moneyness, tau)
-4. **Ablation studies**: layers, heads, d_model, bottleneck dim, masking ratio
-
-**Training strategy**: Train on large synthetic Heston dataset. Fine-tune on real SPX data when available.
-
-Key components:
-- `models/transformer/positional.py` — 2D positional encoding
-- `models/transformer/encoder.py` — Transformer encoder
-- `models/transformer/decoder.py` — Transformer decoder
-- `models/transformer/model.py` — `TransformerSurfaceReconstructor`
-- `models/transformer/loss.py` — Reconstruction + optional KL
+See `docs/phase5.md` for summary.
 
 ---
 

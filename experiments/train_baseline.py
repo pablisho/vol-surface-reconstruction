@@ -8,6 +8,7 @@ Usage:
     python -m experiments.train_baseline --model unet
     python -m experiments.train_baseline --model vae
     python -m experiments.train_baseline --model conv_vae
+    python -m experiments.train_baseline --model transformer
 
 VAE models train on complete surfaces (no masking, beta=1e-4). At evaluation
 time, missing data is handled via latent space optimization (Feugang Nteumagné
@@ -31,6 +32,7 @@ from evaluation.metrics import ReconstructionMetrics, compute_metrics
 from models.base import SurfaceReconstructor
 from models.cnn import CNNReconstructor
 from models.mlp import MLPReconstructor
+from models.transformer import TransformerReconstructor
 from models.unet import UNetReconstructor
 from models.vae import ConvVAEReconstructor, VAEReconstructor, latent_optimize
 from training.config import TrainConfig
@@ -42,14 +44,24 @@ DATA_DIR = Path("data/synthetic/generated")
 BASE_OUT_DIR = Path("experiments/out")
 
 
-def build_model(name: str, n_taus: int, n_strikes: int) -> SurfaceReconstructor:
+def build_model(
+    name: str,
+    n_taus: int,
+    n_strikes: int,
+    *,
+    taus: np.ndarray | None = None,
+    log_moneyness: np.ndarray | None = None,
+    d_model: int = 64,
+    dropout: float = 0.1,
+    base_channels: int = 32,
+) -> SurfaceReconstructor:
     """Create a model by name."""
     if name == "mlp":
         return MLPReconstructor(n_taus=n_taus, n_strikes=n_strikes, hidden_dims=(256, 256))
     elif name == "cnn":
         return CNNReconstructor(n_channels=64, n_layers=5)
     elif name == "unet":
-        return UNetReconstructor(base_channels=32)
+        return UNetReconstructor(base_channels=base_channels)
     elif name == "vae":
         # Architecture matches Feugang Nteumagné et al. (2025):
         # tapered encoder (128→64→32), latent_dim=16, ELU activations
@@ -63,6 +75,15 @@ def build_model(name: str, n_taus: int, n_strikes: int) -> SurfaceReconstructor:
     elif name == "conv_vae":
         return ConvVAEReconstructor(
             n_taus=n_taus, n_strikes=n_strikes, base_channels=32, latent_dim=16
+        )
+    elif name == "transformer":
+        assert taus is not None and log_moneyness is not None
+        return TransformerReconstructor(
+            taus=torch.tensor(taus, dtype=torch.float32),
+            log_moneyness=torch.tensor(log_moneyness, dtype=torch.float32),
+            d_model=d_model,
+            d_ff=d_model * 4,
+            dropout=dropout,
         )
     else:
         raise ValueError(f"Unknown model: {name!r}")
@@ -138,14 +159,30 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train a surface reconstruction model")
     parser.add_argument(
         "--model",
-        choices=["mlp", "cnn", "unet", "vae", "conv_vae"],
+        choices=["mlp", "cnn", "unet", "vae", "conv_vae", "transformer"],
         default="mlp",
         help="Model architecture (default: mlp)",
     )
+    parser.add_argument("--lr", type=float, default=None, help="Learning rate override")
+    parser.add_argument(
+        "--patience", type=int, default=None, help="Early stopping patience override"
+    )
+    parser.add_argument("--epochs", type=int, default=None, help="Max epochs override")
+    parser.add_argument("--d-model", type=int, default=64, help="Transformer d_model (default: 64)")
+    parser.add_argument(
+        "--dropout", type=float, default=0.1, help="Transformer dropout (default: 0.1)"
+    )
+    parser.add_argument(
+        "--base-channels", type=int, default=32, help="U-Net base channels (default: 32)"
+    )
+    parser.add_argument("--tag", type=str, default=None, help="Suffix for output directory")
     args = parser.parse_args()
 
     is_vae = args.model in ("vae", "conv_vae")
-    out_dir = BASE_OUT_DIR / f"train_{args.model}"
+    dir_name = f"train_{args.model}"
+    if args.tag:
+        dir_name += f"_{args.tag}"
+    out_dir = BASE_OUT_DIR / dir_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Load datasets ---
@@ -167,16 +204,25 @@ def main() -> None:
     print(f"Train: {len(train_ds)}, Val: {len(val_ds)} surfaces")
 
     # --- Create model ---
-    model = build_model(args.model, n_taus, n_strikes)
+    model = build_model(
+        args.model,
+        n_taus,
+        n_strikes,
+        taus=train_ds.taus,
+        log_moneyness=train_ds.log_moneyness,
+        d_model=args.d_model,
+        dropout=args.dropout,
+        base_channels=args.base_channels,
+    )
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {args.model} ({n_params:,} parameters)")
 
     # --- Train ---
     config = TrainConfig(
         batch_size=32,
-        lr=1e-3,
-        epochs=200,
-        patience=15,
+        lr=args.lr or 1e-3,
+        epochs=args.epochs or 200,
+        patience=args.patience or 15,
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
     print(f"Training on {config.device} ...")
