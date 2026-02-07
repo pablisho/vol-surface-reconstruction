@@ -48,7 +48,10 @@ def train(
             target = target.to(device)
 
             pred = model(inp)
-            loss = criterion(pred, target)
+            if hasattr(model, "training_loss"):
+                loss = model.training_loss(pred, target)
+            else:
+                loss = criterion(pred, target)
 
             optimizer.zero_grad()
             loss.backward()
@@ -70,7 +73,10 @@ def train(
                 target = target.to(device)
 
                 pred = model(inp)
-                loss = criterion(pred, target)
+                if hasattr(model, "training_loss"):
+                    loss = model.training_loss(pred, target)
+                else:
+                    loss = criterion(pred, target)
 
                 val_loss_sum += loss.item() * inp.shape[0]
                 val_count += inp.shape[0]

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import math
+import os
+from multiprocessing import Pool
 
 import numpy as np
 
@@ -86,6 +88,15 @@ def sample_heston_params(
     raise RuntimeError(f"Could not sample Feller-satisfying params after {max_attempts} attempts")
 
 
+def _generate_one_surface(
+    args: tuple[HestonParams, float, np.ndarray, np.ndarray, float],
+) -> tuple[HestonParams, VolSurface]:
+    """Worker function for parallel surface generation (must be top-level for pickling)."""
+    params, forward, strikes, taus, rate = args
+    surface = generate_heston_surface(params, forward, strikes, taus, rate=rate)
+    return (params, surface)
+
+
 def generate_heston_dataset(
     n_surfaces: int,
     forward: float,
@@ -95,14 +106,23 @@ def generate_heston_dataset(
     *,
     rate: float = 0.0,
     enforce_feller: bool = True,
+    n_workers: int | None = None,
 ) -> list[tuple[HestonParams, VolSurface]]:
     """Generate a batch of random Heston surfaces for ML training.
 
     Returns a list of (params, surface) tuples.
+
+    n_workers: number of parallel processes. None = os.cpu_count(), 1 = sequential.
     """
-    results = []
-    for _ in range(n_surfaces):
-        params = sample_heston_params(rng, enforce_feller=enforce_feller)
-        surface = generate_heston_surface(params, forward, strikes, taus, rate=rate)
-        results.append((params, surface))
-    return results
+    # Sample all params first (fast, deterministic from rng)
+    params_list = [
+        sample_heston_params(rng, enforce_feller=enforce_feller) for _ in range(n_surfaces)
+    ]
+
+    worker_args = [(p, forward, strikes, taus, rate) for p in params_list]
+
+    if n_workers == 1:
+        return [_generate_one_surface(a) for a in worker_args]
+
+    with Pool(processes=n_workers or os.cpu_count()) as pool:
+        return pool.map(_generate_one_surface, worker_args)

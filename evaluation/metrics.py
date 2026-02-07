@@ -13,11 +13,12 @@ from torch import Tensor
 class ReconstructionMetrics:
     """Aggregate reconstruction quality metrics.
 
-    rmse / mae: over the full surface.
+    mse / rmse / mae: over the full surface.
     rmse_observed / rmse_missing: split by mask (observed vs interpolated points).
     max_error: worst-case absolute error anywhere on the surface.
     """
 
+    mse: float
     rmse: float
     mae: float
     rmse_observed: float
@@ -53,7 +54,8 @@ def compute_metrics(
     abs_diff = diff.abs()
 
     # Overall
-    rmse = math.sqrt((diff**2).mean().item())
+    mse = (diff**2).mean().item()
+    rmse = math.sqrt(mse)
     mae = abs_diff.mean().item()
     max_error = abs_diff.max().item()
 
@@ -71,6 +73,7 @@ def compute_metrics(
         rmse_missing = 0.0
 
     return ReconstructionMetrics(
+        mse=mse,
         rmse=rmse,
         mae=mae,
         rmse_observed=rmse_observed,

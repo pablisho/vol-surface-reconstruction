@@ -10,6 +10,7 @@ import pytest
 
 from data.datasets import MaskConfig, VolSurfaceDataset, generate_and_save
 from models.mlp import MLPReconstructor
+from models.vae import VAEReconstructor
 from training.config import TrainConfig
 from training.trainer import train
 
@@ -50,3 +51,14 @@ class TestTrainer:
         ckpt_dir = tmp_path / "ckpts"
         train(model, ds, ds, config, checkpoint_dir=ckpt_dir)
         assert (ckpt_dir / "best_model.pt").exists()
+
+    def test_training_loss_dispatch(self, data_dir: Path) -> None:
+        """When model has training_loss(), trainer uses it instead of MSE."""
+        ds = VolSurfaceDataset(data_dir, mask_config=MaskConfig(missing_frac=0.3))
+        model = VAEReconstructor(
+            n_taus=len(TAUS), n_strikes=len(STRIKES), hidden_dims=(16,), latent_dim=4
+        )
+        config = TrainConfig(batch_size=3, lr=1e-3, epochs=2, patience=100, device="cpu")
+        history = train(model, ds, ds, config)
+        assert len(history["train_loss"]) == 2
+        assert all(0 < loss < 100 for loss in history["train_loss"])

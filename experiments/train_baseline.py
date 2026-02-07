@@ -6,6 +6,12 @@ Usage:
     python -m experiments.train_baseline           # default: mlp
     python -m experiments.train_baseline --model cnn
     python -m experiments.train_baseline --model unet
+    python -m experiments.train_baseline --model vae
+    python -m experiments.train_baseline --model conv_vae
+
+VAE models train on complete surfaces (no masking, beta=1e-4). At evaluation
+time, missing data is handled via latent space optimization (Feugang Nteumagné
+et al. 2025).
 """
 
 from __future__ import annotations
@@ -18,13 +24,15 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch import Tensor
 
 from data.datasets import MaskConfig, VolSurfaceDataset
-from evaluation.metrics import compute_metrics
+from evaluation.metrics import ReconstructionMetrics, compute_metrics
 from models.base import SurfaceReconstructor
 from models.cnn import CNNReconstructor
 from models.mlp import MLPReconstructor
 from models.unet import UNetReconstructor
+from models.vae import ConvVAEReconstructor, VAEReconstructor, latent_optimize
 from training.config import TrainConfig
 from training.trainer import train
 
@@ -42,6 +50,20 @@ def build_model(name: str, n_taus: int, n_strikes: int) -> SurfaceReconstructor:
         return CNNReconstructor(n_channels=64, n_layers=5)
     elif name == "unet":
         return UNetReconstructor(base_channels=32)
+    elif name == "vae":
+        # Architecture matches Feugang Nteumagné et al. (2025):
+        # tapered encoder (128→64→32), latent_dim=16, ELU activations
+        return VAEReconstructor(
+            n_taus=n_taus,
+            n_strikes=n_strikes,
+            hidden_dims=(128, 64, 32),
+            latent_dim=16,
+            activation="elu",
+        )
+    elif name == "conv_vae":
+        return ConvVAEReconstructor(
+            n_taus=n_taus, n_strikes=n_strikes, base_channels=32, latent_dim=16
+        )
     else:
         raise ValueError(f"Unknown model: {name!r}")
 
@@ -66,6 +88,8 @@ def plot_sample_reconstruction(
     device: torch.device,
     model_name: str,
     path: Path,
+    *,
+    use_latent_opt: bool = False,
 ) -> None:
     """Plot original, masked input, and reconstruction for 3 samples."""
     rng = np.random.default_rng(0)
@@ -77,8 +101,12 @@ def plot_sample_reconstruction(
     model.eval()
     for row, idx in enumerate(indices):
         inp, target, mask = dataset[idx]
-        with torch.no_grad():
-            pred = model(inp.unsqueeze(0).to(device)).cpu()
+        if use_latent_opt:
+            observed = target * mask.unsqueeze(0)
+            pred = latent_optimize(model, observed.unsqueeze(0), mask.unsqueeze(0)).cpu()
+        else:
+            with torch.no_grad():
+                pred = model(inp.unsqueeze(0).to(device)).cpu()
 
         target_np = target.squeeze(0).numpy()
         masked_np = inp[0].numpy()
@@ -110,25 +138,33 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train a surface reconstruction model")
     parser.add_argument(
         "--model",
-        choices=["mlp", "cnn", "unet"],
+        choices=["mlp", "cnn", "unet", "vae", "conv_vae"],
         default="mlp",
         help="Model architecture (default: mlp)",
     )
     args = parser.parse_args()
 
+    is_vae = args.model in ("vae", "conv_vae")
     out_dir = BASE_OUT_DIR / f"train_{args.model}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Load datasets ---
-    mask_cfg = MaskConfig(mask_type="random", missing_frac=0.3)
-    train_ds = VolSurfaceDataset(DATA_DIR / "train", mask_config=mask_cfg)
-    val_ds = VolSurfaceDataset(DATA_DIR / "val", mask_config=mask_cfg)
-    test_ds = VolSurfaceDataset(DATA_DIR / "test", mask_config=mask_cfg)
+    # VAE models train on complete surfaces (no masking) following
+    # Feugang Nteumagné et al. (2025). Missing data is handled at inference
+    # via latent space optimization.
+    if is_vae:
+        train_mask_cfg = MaskConfig(mask_type="random", missing_frac=0.0)
+        val_mask_cfg = MaskConfig(mask_type="random", missing_frac=0.0)
+    else:
+        train_mask_cfg = MaskConfig(mask_type="random", missing_frac=0.3)
+        val_mask_cfg = MaskConfig(mask_type="random", missing_frac=0.3)
+    train_ds = VolSurfaceDataset(DATA_DIR / "train", mask_config=train_mask_cfg)
+    val_ds = VolSurfaceDataset(DATA_DIR / "val", mask_config=val_mask_cfg)
 
     n_taus = len(train_ds.taus)
     n_strikes = len(train_ds.strikes)
     print(f"Grid: {n_taus} taus x {n_strikes} strikes")
-    print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)} surfaces")
+    print(f"Train: {len(train_ds)}, Val: {len(val_ds)} surfaces")
 
     # --- Create model ---
     model = build_model(args.model, n_taus, n_strikes)
@@ -160,55 +196,108 @@ def main() -> None:
         model.load_state_dict(torch.load(best_path, weights_only=True))
         print("Loaded best checkpoint")
 
-    # --- Evaluate on test set ---
+    # --- Evaluate ---
     device = torch.device(config.device)
     model = model.to(device)
     model.eval()
 
-    all_preds, all_targets, all_masks = [], [], []
-    with torch.no_grad():
-        for i in range(len(test_ds)):
-            inp, target, mask = test_ds[i]
-            pred = model(inp.unsqueeze(0).to(device)).cpu()
-            all_preds.append(pred.squeeze(0))
-            all_targets.append(target)
-            all_masks.append(mask)
+    # Helper: collect predictions for a dataset
+    def evaluate_direct(ds: VolSurfaceDataset) -> tuple[Tensor, Tensor, Tensor]:
+        preds, tgts, msks = [], [], []
+        with torch.no_grad():
+            for i in range(len(ds)):
+                inp, target, mask = ds[i]
+                pred = model(inp.unsqueeze(0).to(device)).cpu()
+                preds.append(pred.squeeze(0))
+                tgts.append(target)
+                msks.append(mask)
+        return torch.stack(preds), torch.stack(tgts), torch.stack(msks)
 
-    preds = torch.stack(all_preds)
-    targets = torch.stack(all_targets)
-    masks = torch.stack(all_masks)
+    def evaluate_latent_opt(ds: VolSurfaceDataset) -> tuple[Tensor, Tensor, Tensor]:
+        preds, tgts, msks = [], [], []
+        for i in range(len(ds)):
+            inp, target, mask = ds[i]
+            observed = target * mask.unsqueeze(0)
+            pred = latent_optimize(model, observed.unsqueeze(0), mask.unsqueeze(0)).cpu()
+            preds.append(pred.squeeze(0))
+            tgts.append(target)
+            msks.append(mask)
+        return torch.stack(preds), torch.stack(tgts), torch.stack(msks)
 
-    metrics = compute_metrics(preds, targets, masks)
-    print(f"\nReconstruction metrics ({args.model}, test set):")
-    print(f"  RMSE:          {metrics.rmse:.6f}")
-    print(f"  MAE:           {metrics.mae:.6f}")
-    print(f"  RMSE observed: {metrics.rmse_observed:.6f}")
-    print(f"  RMSE missing:  {metrics.rmse_missing:.6f}")
-    print(f"  Max error:     {metrics.max_error:.6f}")
+    def print_metrics(label: str, m: ReconstructionMetrics) -> None:
+        print(f"\n  {label}:")
+        print(f"    MSE:           {m.mse:.6e}")
+        print(f"    RMSE:          {m.rmse:.6f}")
+        print(f"    MAE:           {m.mae:.6f}")
+        print(f"    RMSE observed: {m.rmse_observed:.6f}")
+        print(f"    RMSE missing:  {m.rmse_missing:.6f}")
+        print(f"    Max error:     {m.max_error:.6f}")
 
-    # --- Save outputs ---
-    plot_loss_curve(history, out_dir / "loss_curve.png")
-    plot_sample_reconstruction(
-        test_ds, model, device, args.model, out_dir / "sample_reconstruction.png"
-    )
+    def metrics_to_dict(m: ReconstructionMetrics) -> dict:
+        return {
+            "mse": m.mse,
+            "rmse": m.rmse,
+            "mae": m.mae,
+            "rmse_observed": m.rmse_observed,
+            "rmse_missing": m.rmse_missing,
+            "max_error": m.max_error,
+        }
+
+    # Test set is always masked (30% missing)
+    test_mask_cfg = MaskConfig(mask_type="random", missing_frac=0.3)
+    test_ds = VolSurfaceDataset(DATA_DIR / "test", mask_config=test_mask_cfg)
+
+    print(f"\nReconstruction metrics ({args.model}):")
+
+    # Train/val: direct reconstruction (measures autoencoder quality)
+    print("\n  --- Train set (direct) ---")
+    train_preds, train_targets, train_masks = evaluate_direct(train_ds)
+    train_metrics = compute_metrics(train_preds, train_targets, train_masks)
+    print_metrics("Train (direct)", train_metrics)
+
+    print("\n  --- Val set (direct) ---")
+    val_preds, val_targets, val_masks = evaluate_direct(val_ds)
+    val_metrics = compute_metrics(val_preds, val_targets, val_masks)
+    print_metrics("Val (direct)", val_metrics)
+
+    # Test set: direct reconstruction
+    print("\n  --- Test set (direct, 30% missing) ---")
+    test_preds, test_targets, test_masks = evaluate_direct(test_ds)
+    test_direct_metrics = compute_metrics(test_preds, test_targets, test_masks)
+    print_metrics("Test (direct)", test_direct_metrics)
+
+    results = {
+        "model": args.model,
+        "n_params": n_params,
+        "epochs_trained": len(history["train_loss"]),
+        "final_train_loss": history["train_loss"][-1],
+        "final_val_loss": history["val_loss"][-1],
+        "train": metrics_to_dict(train_metrics),
+        "val": metrics_to_dict(val_metrics),
+        "test_direct": metrics_to_dict(test_direct_metrics),
+    }
+
+    # VAE: also evaluate with latent space optimization
+    if is_vae:
+        print("\n  --- Test set (latent optimization, 30% missing) ---")
+        test_lo_preds, test_lo_targets, test_lo_masks = evaluate_latent_opt(test_ds)
+        test_lo_metrics = compute_metrics(test_lo_preds, test_lo_targets, test_lo_masks)
+        print_metrics("Test (latent opt)", test_lo_metrics)
+        results["test_latent_opt"] = metrics_to_dict(test_lo_metrics)
 
     with open(out_dir / "metrics.json", "w") as f:
-        json.dump(
-            {
-                "model": args.model,
-                "n_params": n_params,
-                "rmse": metrics.rmse,
-                "mae": metrics.mae,
-                "rmse_observed": metrics.rmse_observed,
-                "rmse_missing": metrics.rmse_missing,
-                "max_error": metrics.max_error,
-                "epochs_trained": len(history["train_loss"]),
-                "final_train_loss": history["train_loss"][-1],
-                "final_val_loss": history["val_loss"][-1],
-            },
-            f,
-            indent=2,
-        )
+        json.dump(results, f, indent=2)
+
+    # --- Save plots ---
+    plot_loss_curve(history, out_dir / "loss_curve.png")
+    plot_sample_reconstruction(
+        test_ds,
+        model,
+        device,
+        args.model,
+        out_dir / "sample_reconstruction.png",
+        use_latent_opt=is_vae,
+    )
 
     print(f"\nOutputs saved to {out_dir}/")
 
