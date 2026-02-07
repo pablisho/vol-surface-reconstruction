@@ -111,3 +111,17 @@ The `VolSurface` is the data structure that flows through every subsequent phase
 - **Phase 8** (Evaluation): Comparison plots and metrics operate on pairs of `VolSurface` objects (original vs reconstructed).
 
 The masking module is directly relevant to the thesis problem statement: reconstructing a full surface from sparse observations. The mask patterns (random, block, wing, short tenor) simulate the types of incompleteness found in real options markets.
+
+## References
+
+- **Gatheral, J. (2006)**. *The Volatility Surface: A Practitioner's Guide*. Wiley Finance.
+  - Foundational reference for implied volatility surface representation, log-moneyness coordinates, and the smile/skew/term-structure decomposition that informs our `VolSurface` data structure.
+
+- **Cont, R. & da Fonseca, J. (2002)**. *Dynamics of Implied Volatility Surfaces*. Quantitative Finance, 2(1), 45-60.
+  - Motivates representing vol surfaces on a regular (τ, K) grid and studying their dynamics. Our grid-based `VolSurface` follows this convention.
+
+- **Bergeron, M. et al. (2021)**. *Variational Autoencoders: A Hands-Off Approach to Volatility*. arXiv:2102.03945.
+  - Masking patterns (random dropout, structured missingness) inspired by their treatment of incomplete market data as input to generative models.
+
+- **He, K. et al. (2022)**. *Masked Autoencoders Are Scalable Vision Learners*. CVPR 2022.
+  - The random masking strategy for data augmentation during training (different mask per epoch) follows the MAE paradigm of learning to reconstruct from partial observations.

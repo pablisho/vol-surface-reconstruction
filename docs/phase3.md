@@ -95,3 +95,23 @@ This phase establishes the complete experimental framework that all subsequent p
 - **Phase 6 (No-Arbitrage)** adds penalty terms to the MSE loss — the training loop supports this by design.
 - **Phase 9 (Evaluation)** extends `compute_metrics()` with arbitrage violation rates and per-region breakdowns.
 - The baseline RMSE missing values (MLP: 0.0105, CNN/U-Net: 0.0053) serve as the bar that more advanced architectures must beat.
+
+## References
+
+- **Ronneberger, O., Fischer, P., & Brox, T. (2015)**. *U-Net: Convolutional Networks for Biomedical Image Segmentation*. MICCAI 2015.
+  - The U-Net encoder-decoder architecture with skip connections adapted for our `UNetReconstructor`. Our 2-level version is scaled down for the small 8×25 grid.
+
+- **He, K., Zhang, X., Ren, S., & Sun, J. (2016)**. *Deep Residual Learning for Image Recognition*. CVPR 2016.
+  - Residual connections explored (and ultimately removed) in the CNN and U-Net models. Our ablation confirmed that residual shortcuts hurt reconstruction of missing points when the baseline (mean-fill) is a poor approximation.
+
+- **Kingma, D.P. & Ba, J. (2015)**. *Adam: A Method for Stochastic Optimization*. ICLR 2015.
+  - The Adam optimizer used in `training/trainer.py` with default lr=1e-3.
+
+- **Prechelt, L. (1998)**. *Early Stopping — But When?*. In Neural Networks: Tricks of the Trade, Springer.
+  - Patience-based early stopping strategy used in the training loop.
+
+- **Pathak, D. et al. (2016)**. *Context Encoders: Feature Learning by Inpainting*. CVPR 2016.
+  - Image inpainting with CNNs. Our task (reconstructing missing vol surface points from observed ones) is structurally analogous to image inpainting, motivating the CNN and U-Net architectures.
+
+- **He, K. et al. (2022)**. *Masked Autoencoders Are Scalable Vision Learners*. CVPR 2022.
+  - The 2-channel input design (masked values + binary mask) and on-the-fly random masking for data augmentation follow the MAE paradigm.

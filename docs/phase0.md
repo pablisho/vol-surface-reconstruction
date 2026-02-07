@@ -62,3 +62,17 @@ The pricing engine provides three capabilities needed for the ML work:
 1. **Synthetic data generation**: Price options under any vol assumption, then recover implied vol. This is how synthetic vol surfaces are built (Phase 2 will extend this with Heston).
 2. **IV computation**: Convert between prices and implied volatilities. Used by both the data pipeline (converting market prices to IV) and the evaluation framework (validating reconstructed surfaces).
 3. **Trusted reference**: The tight-tolerance test suite ensures that the pricing math is correct, so any discrepancies found later can be attributed to the ML models rather than pricing bugs.
+
+## References
+
+- **Black, F. (1976)**. *The Pricing of Commodity Contracts*. Journal of Financial Economics, 3(1-2), 167-179.
+  - The Black-76 forward pricing model implemented in `pricing/black76.py`.
+
+- **Abramowitz, M. & Stegun, I. (1964)**. *Handbook of Mathematical Functions*. National Bureau of Standards.
+  - Normal CDF via `math.erf`: Φ(x) = 0.5 × (1 + erf(x/√2)). Used in `pricing/black76.py` to avoid scipy dependency.
+
+- **Manaster, S. & Koehler, G. (1982)**. *The Calculation of Implied Variances from the Black-Scholes Model*. Journal of Finance, 37(1), 227-230.
+  - Bisection-based implied volatility solver approach used in `pricing/implied_vol.py`.
+
+- **Jäckel, P. (2015)**. *Let's Be Rational*. Wilmott Magazine.
+  - Influenced the Newton-Raphson + bisection fallback design in `implied_vol_newton()`. While we don't use Jäckel's rational approximation, the hybrid approach (fast Newton with robust fallback) follows the same philosophy.

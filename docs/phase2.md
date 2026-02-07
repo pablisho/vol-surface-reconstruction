@@ -132,3 +132,20 @@ The Heston model is the primary source of **synthetic training data** for the ML
 - **No-arbitrage validation** (Phase 4): Heston surfaces are arbitrage-free by construction (they come from a well-defined stochastic volatility model). They serve as positive examples for validating the no-arbitrage constraint module — butterfly, calendar, and density conditions should all be satisfied.
 - **Baseline comparison** (Phases 5-6): The diversity of smile shapes (controlled by ρ and ξ) tests whether the SVI and VAE baselines can capture both symmetric smiles and asymmetric skews.
 - **Parameter sampling ranges** are designed to produce equity-realistic surfaces, with ρ restricted to [-0.9, -0.1] (negative spot-vol correlation) and v₀/θ corresponding to 10%-40% implied vol levels.
+
+## References
+
+- **Heston, S.L. (1993)**. *A Closed-Form Solution for Options with Stochastic Volatility with Applications to Bond and Currency Options*. Review of Financial Studies, 6(2), 327-343.
+  - The stochastic volatility model implemented in `data/synthetic/heston.py`. Provides the characteristic function and the call pricing decomposition C = DF × [F·P₁ - K·P₂].
+
+- **Albrecher, H., Mayer, P., Schoutens, W., & Tistaert, J. (2007)**. *The Little Heston Trap*. Wilmott Magazine.
+  - The "rotation" formulation of the Heston characteristic function used in `_heston_char_func()`. Ensures |g| < 1 to avoid branch-cut discontinuities in the complex logarithm. This is the key numerical stability fix for our implementation.
+
+- **Gil-Pelaez, J. (1951)**. *Note on the Inversion Theorem*. Biometrika, 38(3-4), 481-482.
+  - The Fourier inversion formula used to compute P₁ and P₂ from the characteristic function. We use this via `scipy.integrate.quad` rather than FFT (Carr-Madan) for simplicity and point-wise accuracy.
+
+- **Carr, P. & Madan, D. (1999)**. *Option Valuation Using the Fast Fourier Transform*. Journal of Computational Finance, 2(4), 61-73.
+  - The FFT-based alternative we considered but did not implement. Gil-Pelaez quadrature was chosen instead for simplicity and exact point-wise pricing at our grid sizes.
+
+- **Feller, W. (1951)**. *Two Singular Diffusion Problems*. Annals of Mathematics, 54(1), 173-182.
+  - The Feller condition 2κθ ≥ ξ² for strict positivity of the CIR variance process. Exposed as a property on `HestonParams` but not enforced as a hard constraint, since many calibrated parameters violate it.
