@@ -84,16 +84,17 @@ See `docs/phase3.md` for summary.
 
 ---
 
-## Phase 4: VAE Baseline
+## Phase 4: VAE Baseline  ✓ DONE
 
-**Why**: Established ML approach from literature (Bergeron et al. 2021, Feugang Nteumagné et al. 2025). The ML baseline against which the transformer is measured.
+**Deliverables**: `models/vae.py` (VAEReconstructor + ConvVAEReconstructor + latent_optimize), updated `training/trainer.py`, `evaluation/metrics.py`, `experiments/train_baseline.py` + tests (28 tests, 182 total)
 
-**Deliverables**: `models/vae/` + `experiments/train_vae.py` + tests
+- FC VAE (99k params): tapered encoder (128→64→32), latent_dim=16, ELU, beta=1e-4
+- Conv VAE (273k params): stride-2 Conv2d encoder, bilinear+Conv2d decoder, latent_dim=16
+- Train on complete surfaces; inference via latent space optimization (200 Adam steps)
+- Multiprocessing for dataset generation; scaled to 8k/1k/1k split
+- FC VAE val MSE within 1.2x of Feugang Nteumagné et al. (2025)
 
-- `models/vae/model.py` — Encoder (FC → mu, log_var), reparameterization, decoder (FC → reconstructed surface). Input: flattened masked surface + mask indicator.
-- `models/vae/loss.py` — ELBO: reconstruction MSE + beta * KL divergence.
-
-Reuses training infra from Phase 3.
+See `docs/phase4.md` for summary.
 
 ---
 
