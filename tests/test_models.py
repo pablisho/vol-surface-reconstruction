@@ -1,55 +1,107 @@
 # tests/test_models.py
-"""Tests for models/ — MLP baseline and base class."""
+"""Tests for models/ — all reconstruction model architectures."""
 
 from __future__ import annotations
 
-import pytest
 import torch
 
 from models.base import SurfaceReconstructor
+from models.cnn import CNNReconstructor
 from models.mlp import MLPReconstructor
+from models.unet import UNetReconstructor
 
 N_TAUS = 8
 N_STRIKES = 25
 BATCH = 4
 
 
-@pytest.fixture
-def model() -> MLPReconstructor:
-    return MLPReconstructor(n_taus=N_TAUS, n_strikes=N_STRIKES, hidden_dims=(64, 64))
-
-
 class TestMLPReconstructor:
-    def test_is_surface_reconstructor(self, model: MLPReconstructor) -> None:
+    def test_is_surface_reconstructor(self) -> None:
+        model = MLPReconstructor(n_taus=N_TAUS, n_strikes=N_STRIKES, hidden_dims=(64, 64))
         assert isinstance(model, SurfaceReconstructor)
 
-    def test_output_shape(self, model: MLPReconstructor) -> None:
+    def test_output_shape(self) -> None:
+        model = MLPReconstructor(n_taus=N_TAUS, n_strikes=N_STRIKES, hidden_dims=(64, 64))
         x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
-        out = model(x)
-        assert out.shape == (BATCH, 1, N_TAUS, N_STRIKES)
+        assert model(x).shape == (BATCH, 1, N_TAUS, N_STRIKES)
 
-    def test_single_sample(self, model: MLPReconstructor) -> None:
+    def test_single_sample(self) -> None:
+        model = MLPReconstructor(n_taus=N_TAUS, n_strikes=N_STRIKES, hidden_dims=(64, 64))
         x = torch.randn(1, 2, N_TAUS, N_STRIKES)
-        out = model(x)
-        assert out.shape == (1, 1, N_TAUS, N_STRIKES)
+        assert model(x).shape == (1, 1, N_TAUS, N_STRIKES)
 
-    def test_output_finite(self, model: MLPReconstructor) -> None:
+    def test_output_finite(self) -> None:
+        model = MLPReconstructor(n_taus=N_TAUS, n_strikes=N_STRIKES, hidden_dims=(64, 64))
         x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
-        out = model(x)
-        assert torch.all(torch.isfinite(out))
+        assert torch.all(torch.isfinite(model(x)))
 
-    def test_different_input_different_output(self, model: MLPReconstructor) -> None:
+    def test_different_input_different_output(self) -> None:
+        model = MLPReconstructor(n_taus=N_TAUS, n_strikes=N_STRIKES, hidden_dims=(64, 64))
         x1 = torch.randn(1, 2, N_TAUS, N_STRIKES)
         x2 = torch.randn(1, 2, N_TAUS, N_STRIKES)
-        out1 = model(x1)
-        out2 = model(x2)
-        assert not torch.allclose(out1, out2)
+        assert not torch.allclose(model(x1), model(x2))
 
-    def test_gradient_flows(self, model: MLPReconstructor) -> None:
+    def test_gradient_flows(self) -> None:
+        model = MLPReconstructor(n_taus=N_TAUS, n_strikes=N_STRIKES, hidden_dims=(64, 64))
         x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
-        out = model(x)
-        loss = out.sum()
-        loss.backward()
-        # Check that at least one parameter has a gradient
+        model(x).sum().backward()
+        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())
+        assert has_grad
+
+
+class TestCNNReconstructor:
+    def test_is_surface_reconstructor(self) -> None:
+        model = CNNReconstructor(n_channels=16, n_layers=3)
+        assert isinstance(model, SurfaceReconstructor)
+
+    def test_output_shape(self) -> None:
+        model = CNNReconstructor(n_channels=16, n_layers=3)
+        x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
+        assert model(x).shape == (BATCH, 1, N_TAUS, N_STRIKES)
+
+    def test_output_finite(self) -> None:
+        model = CNNReconstructor(n_channels=16, n_layers=3)
+        x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
+        assert torch.all(torch.isfinite(model(x)))
+
+    def test_different_input_different_output(self) -> None:
+        model = CNNReconstructor(n_channels=16, n_layers=3)
+        x1 = torch.randn(1, 2, N_TAUS, N_STRIKES)
+        x2 = torch.randn(1, 2, N_TAUS, N_STRIKES)
+        assert not torch.allclose(model(x1), model(x2))
+
+    def test_gradient_flows(self) -> None:
+        model = CNNReconstructor(n_channels=16, n_layers=3)
+        x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
+        model(x).sum().backward()
+        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())
+        assert has_grad
+
+
+class TestUNetReconstructor:
+    def test_is_surface_reconstructor(self) -> None:
+        model = UNetReconstructor(base_channels=8)
+        assert isinstance(model, SurfaceReconstructor)
+
+    def test_output_shape(self) -> None:
+        model = UNetReconstructor(base_channels=8)
+        x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
+        assert model(x).shape == (BATCH, 1, N_TAUS, N_STRIKES)
+
+    def test_output_finite(self) -> None:
+        model = UNetReconstructor(base_channels=8)
+        x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
+        assert torch.all(torch.isfinite(model(x)))
+
+    def test_different_input_different_output(self) -> None:
+        model = UNetReconstructor(base_channels=8)
+        x1 = torch.randn(1, 2, N_TAUS, N_STRIKES)
+        x2 = torch.randn(1, 2, N_TAUS, N_STRIKES)
+        assert not torch.allclose(model(x1), model(x2))
+
+    def test_gradient_flows(self) -> None:
+        model = UNetReconstructor(base_channels=8)
+        x = torch.randn(BATCH, 2, N_TAUS, N_STRIKES)
+        model(x).sum().backward()
         has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())
         assert has_grad
