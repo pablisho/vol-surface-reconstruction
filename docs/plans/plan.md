@@ -114,23 +114,18 @@ See `docs/phase5.md` for summary.
 
 ---
 
-## Phase 6: No-Arbitrage Constraints
+## Phase 6: No-Arbitrage Constraints  ✓ DONE
 
 **Why**: Core thesis contribution (#3). Shared module that plugs into any model's loss.
 
-**Deliverables**: `models/constraints.py` + tests
+**Deliverables**: `models/constraints.py`, `evaluation/arbitrage.py`, `experiments/eval_arbitrage.py`, updated `training/trainer.py` and `experiments/train_baseline.py` + tests (18 tests, 221 total)
 
-**Static arbitrage conditions** (on total variance surface w = sigma^2 * tau):
-- **Butterfly**: d^2w/dk^2 >= 0 (call prices convex in strike)
-- **Calendar spread**: w(k, tau_1) <= w(k, tau_2) for tau_1 < tau_2 (total variance non-decreasing)
-- **Negative density**: local vol positive (risk-neutral density >= 0)
+- Differentiable penalties: calendar spread (total variance non-decreasing in τ) + butterfly (total variance convex in k)
+- All models match ground truth on calendar (~0.04%), but introduce 5.5x more butterfly violations (45-48% vs 8.6%)
+- Butterfly penalty λ=0.1 halves violations (47% → 28%) with only +7% RMSE
+- Full Gatheral density condition (g(k) ≥ 0) deferred to Phase 9
 
-**Three enforcement mechanisms**:
-1. `penalty_loss()` — Differentiable penalty added to training loss
-2. `arbitrage_regularizer()` — Penalize proximity to violations
-3. `project_surface()` — Post-hoc projection onto arbitrage-free set
-
-After implementing, retrain VAE and Transformer with arbitrage penalties enabled.
+See `docs/phase6.md` for summary.
 
 ---
 
@@ -201,10 +196,10 @@ Extend `data/datasets.py` to support real data sources alongside Heston syntheti
 Phase 1 (VolSurface) ✓
   └→ Phase 2 (Heston) ✓
       └→ Phase 3 (E2E Training Infra) ✓
-          ├→ Phase 4 (VAE)
-          │   └→ Phase 5 (Transformer) ──┐
+          ├→ Phase 4 (VAE) ✓
+          │   └→ Phase 5 (Transformer) ✓ ─┐
           │                               ├→ Phase 9 (Evaluation) → Phase 10
-          ├→ Phase 6 (No-Arb) ───────────┤
+          ├→ Phase 6 (No-Arb) ✓ ─────────┤
           ├→ Phase 7 (SVI) ─────────────┘
           └→ Phase 8 (Real Data) ────────┘
 ```
