@@ -57,6 +57,20 @@ def main() -> None:
     print(f"Test set: {n_test} surfaces")
     print(f"SVI: 5 params per slice x {n_taus} slices = {5 * n_taus} params per surface")
 
+    # Save experiment config
+    experiment_config = {
+        "model": "svi",
+        "n_params_per_surface": 5 * n_taus,
+        "grid": {"n_taus": n_taus, "n_strikes": n_strikes},
+        "data_dir": str(data_dir),
+        "source": source,
+        "variant": variant,
+        "method": "per-slice L-BFGS-B calibration",
+        "masking": {"test_missing_frac": 0.3},
+    }
+    with open(out_dir / "config.json", "w") as f:
+        json.dump(experiment_config, f, indent=2)
+
     # Fit SVI on each test surface
     preds = []
     targets = []
@@ -111,6 +125,8 @@ def main() -> None:
     # Arbitrage violations
     arb_cal_total, arb_but_total = 0, 0
     arb_cal_checks, arb_but_checks = 0, 0
+    cal_max_violations, but_max_violations = [], []
+    cal_mean_violations, but_mean_violations = [], []
     for i in range(n_test):
         pred_iv = preds[i].squeeze(0).numpy()
         report = surface_arbitrage_report(pred_iv, test_ds.taus, log_moneyness)
@@ -118,12 +134,24 @@ def main() -> None:
         arb_cal_checks += report["calendar"]["total_checks"]
         arb_but_total += report["butterfly"]["count"]
         arb_but_checks += report["butterfly"]["total_checks"]
+        if report["calendar"]["max_violation"] > 0:
+            cal_max_violations.append(report["calendar"]["max_violation"])
+            cal_mean_violations.append(report["calendar"]["mean_violation"])
+        if report["butterfly"]["max_violation"] > 0:
+            but_max_violations.append(report["butterfly"]["max_violation"])
+            but_mean_violations.append(report["butterfly"]["mean_violation"])
 
     cal_rate = arb_cal_total / arb_cal_checks if arb_cal_checks > 0 else 0.0
     but_rate = arb_but_total / arb_but_checks if arb_but_checks > 0 else 0.0
+    cal_max = float(max(cal_max_violations)) if cal_max_violations else 0.0
+    cal_mean = float(np.mean(cal_mean_violations)) if cal_mean_violations else 0.0
+    but_max = float(max(but_max_violations)) if but_max_violations else 0.0
+    but_mean = float(np.mean(but_mean_violations)) if but_mean_violations else 0.0
     print("\nArbitrage violations (SVI predictions):")
     print(f"  Calendar: {arb_cal_total}/{arb_cal_checks} ({cal_rate:.4f})")
+    print(f"    max_violation={cal_max:.6f}, mean_violation={cal_mean:.6f}")
     print(f"  Butterfly: {arb_but_total}/{arb_but_checks} ({but_rate:.4f})")
+    print(f"    max_violation={but_max:.6f}, mean_violation={but_mean:.6f}")
 
     # Save results
     results = {
@@ -143,9 +171,13 @@ def main() -> None:
             "calendar_violations": arb_cal_total,
             "calendar_checks": arb_cal_checks,
             "calendar_rate": cal_rate,
+            "calendar_max_violation": cal_max,
+            "calendar_mean_violation": cal_mean,
             "butterfly_violations": arb_but_total,
             "butterfly_checks": arb_but_checks,
             "butterfly_rate": but_rate,
+            "butterfly_max_violation": but_max,
+            "butterfly_mean_violation": but_mean,
         },
     }
 

@@ -281,6 +281,42 @@ def main() -> None:
         scheduler=args.scheduler,
         warmup_epochs=args.warmup_epochs,
     )
+
+    # --- Save experiment config ---
+    experiment_config = {
+        "model": args.model,
+        "n_params": n_params,
+        "grid": {"n_taus": n_taus, "n_strikes": n_strikes},
+        "data_dir": str(data_dir),
+        "source": source,
+        "variant": variant,
+        "pretrained": str(args.pretrained) if args.pretrained else None,
+        "training": {
+            "batch_size": config.batch_size,
+            "lr": config.lr,
+            "epochs": config.epochs,
+            "patience": config.patience,
+            "weight_decay": config.weight_decay,
+            "scheduler": config.scheduler,
+            "warmup_epochs": config.warmup_epochs,
+        },
+        "model_args": {
+            "d_model": args.d_model,
+            "dropout": args.dropout,
+            "base_channels": args.base_channels,
+        },
+        "constraints": {
+            "lambda_calendar": args.lambda_calendar,
+            "lambda_butterfly": args.lambda_butterfly,
+        },
+        "masking": {
+            "train_missing_frac": 0.0 if is_vae else 0.3,
+            "test_missing_frac": 0.3,
+        },
+    }
+    with open(out_dir / "config.json", "w") as f:
+        json.dump(experiment_config, f, indent=2)
+
     print(f"Training on {config.device} ...")
     if config.weight_decay > 0:
         print(f"  AdamW weight_decay={config.weight_decay}")
@@ -408,6 +444,8 @@ def main() -> None:
     print("\n  --- Arbitrage violations (test set) ---")
     arb_cal_total, arb_but_total = 0, 0
     arb_cal_checks, arb_but_checks = 0, 0
+    cal_max_violations, but_max_violations = [], []
+    cal_mean_violations, but_mean_violations = [], []
     for i in range(test_preds.shape[0]):
         pred_iv = test_preds[i].squeeze(0).numpy()
         report = surface_arbitrage_report(pred_iv, test_ds.taus, test_ds.log_moneyness)
@@ -415,17 +453,33 @@ def main() -> None:
         arb_cal_checks += report["calendar"]["total_checks"]
         arb_but_total += report["butterfly"]["count"]
         arb_but_checks += report["butterfly"]["total_checks"]
+        if report["calendar"]["max_violation"] > 0:
+            cal_max_violations.append(report["calendar"]["max_violation"])
+            cal_mean_violations.append(report["calendar"]["mean_violation"])
+        if report["butterfly"]["max_violation"] > 0:
+            but_max_violations.append(report["butterfly"]["max_violation"])
+            but_mean_violations.append(report["butterfly"]["mean_violation"])
     cal_rate = arb_cal_total / arb_cal_checks if arb_cal_checks > 0 else 0.0
     but_rate = arb_but_total / arb_but_checks if arb_but_checks > 0 else 0.0
+    cal_max = float(max(cal_max_violations)) if cal_max_violations else 0.0
+    cal_mean = float(np.mean(cal_mean_violations)) if cal_mean_violations else 0.0
+    but_max = float(max(but_max_violations)) if but_max_violations else 0.0
+    but_mean = float(np.mean(but_mean_violations)) if but_mean_violations else 0.0
     print(f"    Calendar: {arb_cal_total}/{arb_cal_checks} violations ({cal_rate:.4f})")
+    print(f"      max_violation={cal_max:.6f}, mean_violation={cal_mean:.6f}")
     print(f"    Butterfly: {arb_but_total}/{arb_but_checks} violations ({but_rate:.4f})")
+    print(f"      max_violation={but_max:.6f}, mean_violation={but_mean:.6f}")
     results["arbitrage"] = {
         "calendar_violations": arb_cal_total,
         "calendar_checks": arb_cal_checks,
         "calendar_rate": cal_rate,
+        "calendar_max_violation": cal_max,
+        "calendar_mean_violation": cal_mean,
         "butterfly_violations": arb_but_total,
         "butterfly_checks": arb_but_checks,
         "butterfly_rate": but_rate,
+        "butterfly_max_violation": but_max,
+        "butterfly_mean_violation": but_mean,
     }
 
     # VAE: also evaluate with latent space optimization
