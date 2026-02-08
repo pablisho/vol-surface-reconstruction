@@ -28,9 +28,11 @@ import torch
 from torch import Tensor
 
 from data.datasets import MaskConfig, VolSurfaceDataset
+from evaluation.arbitrage import surface_arbitrage_report
 from evaluation.metrics import ReconstructionMetrics, compute_metrics
 from models.base import SurfaceReconstructor
 from models.cnn import CNNReconstructor
+from models.constraints import no_arbitrage_penalty
 from models.mlp import MLPReconstructor
 from models.transformer import TransformerReconstructor
 from models.unet import UNetReconstructor
@@ -176,6 +178,18 @@ def main() -> None:
         "--base-channels", type=int, default=32, help="U-Net base channels (default: 32)"
     )
     parser.add_argument("--tag", type=str, default=None, help="Suffix for output directory")
+    parser.add_argument(
+        "--lambda-calendar",
+        type=float,
+        default=0.0,
+        help="Calendar spread penalty weight (default: 0.0 = disabled)",
+    )
+    parser.add_argument(
+        "--lambda-butterfly",
+        type=float,
+        default=0.0,
+        help="Butterfly penalty weight (default: 0.0 = disabled)",
+    )
     args = parser.parse_args()
 
     is_vae = args.model in ("vae", "conv_vae")
@@ -227,12 +241,27 @@ def main() -> None:
     )
     print(f"Training on {config.device} ...")
 
+    # --- No-arbitrage constraint ---
+    constraint_fn = None
+    if args.lambda_calendar > 0 or args.lambda_butterfly > 0:
+        dev = torch.device(config.device)
+        taus_t = torch.tensor(train_ds.taus, dtype=torch.float32, device=dev)
+        lm_t = torch.tensor(train_ds.log_moneyness, dtype=torch.float32, device=dev)
+        lam_cal = args.lambda_calendar
+        lam_but = args.lambda_butterfly
+
+        def constraint_fn(pred: Tensor) -> Tensor:
+            return no_arbitrage_penalty(pred, taus_t, lm_t, lam_cal, lam_but)
+
+        print(f"  Constraints: calendar={lam_cal}, butterfly={lam_but}")
+
     history = train(
         model=model,
         train_dataset=train_ds,
         val_dataset=val_ds,
         config=config,
         checkpoint_dir=out_dir,
+        constraint_fn=constraint_fn,
     )
     print(f"Training complete: {len(history['train_loss'])} epochs")
 
@@ -321,6 +350,30 @@ def main() -> None:
         "train": metrics_to_dict(train_metrics),
         "val": metrics_to_dict(val_metrics),
         "test_direct": metrics_to_dict(test_direct_metrics),
+    }
+
+    # --- Arbitrage violation analysis on test set predictions ---
+    print("\n  --- Arbitrage violations (test set) ---")
+    arb_cal_total, arb_but_total = 0, 0
+    arb_cal_checks, arb_but_checks = 0, 0
+    for i in range(test_preds.shape[0]):
+        pred_iv = test_preds[i].squeeze(0).numpy()
+        report = surface_arbitrage_report(pred_iv, test_ds.taus, test_ds.log_moneyness)
+        arb_cal_total += report["calendar"]["count"]
+        arb_cal_checks += report["calendar"]["total_checks"]
+        arb_but_total += report["butterfly"]["count"]
+        arb_but_checks += report["butterfly"]["total_checks"]
+    cal_rate = arb_cal_total / arb_cal_checks if arb_cal_checks > 0 else 0.0
+    but_rate = arb_but_total / arb_but_checks if arb_but_checks > 0 else 0.0
+    print(f"    Calendar: {arb_cal_total}/{arb_cal_checks} violations ({cal_rate:.4f})")
+    print(f"    Butterfly: {arb_but_total}/{arb_but_checks} violations ({but_rate:.4f})")
+    results["arbitrage"] = {
+        "calendar_violations": arb_cal_total,
+        "calendar_checks": arb_cal_checks,
+        "calendar_rate": cal_rate,
+        "butterfly_violations": arb_but_total,
+        "butterfly_checks": arb_but_checks,
+        "butterfly_rate": but_rate,
     }
 
     # VAE: also evaluate with latent space optimization

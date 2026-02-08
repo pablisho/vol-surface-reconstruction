@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import torch
-from torch import nn
+from torch import Tensor, nn
 from torch.utils.data import DataLoader
 
 from models.base import SurfaceReconstructor
@@ -20,6 +21,7 @@ def train(
     val_dataset: torch.utils.data.Dataset,
     config: TrainConfig,
     checkpoint_dir: str | Path | None = None,
+    constraint_fn: Callable[[Tensor], Tensor] | None = None,
 ) -> dict[str, list[float]]:
     """Train the model and return training history.
 
@@ -57,6 +59,9 @@ def train(
             else:
                 loss = criterion(pred, target)
 
+            if constraint_fn is not None:
+                loss = loss + constraint_fn(pred)
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -81,6 +86,9 @@ def train(
                     loss = model.training_loss(pred, target)
                 else:
                     loss = criterion(pred, target)
+
+                if constraint_fn is not None:
+                    loss = loss + constraint_fn(pred)
 
                 val_loss_sum += loss.item() * inp.shape[0]
                 val_count += inp.shape[0]
