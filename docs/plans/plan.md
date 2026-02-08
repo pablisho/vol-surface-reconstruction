@@ -129,16 +129,19 @@ See `docs/phase6.md` for summary.
 
 ---
 
-## Phase 7: SVI Parametric Baseline
+## Phase 7: SVI Parametric Baseline  ✓ DONE
 
 **Why**: Industry-standard non-ML approach. Establishes the classical bar.
 
-**Deliverables**: `models/svi/` + `experiments/train_svi.py` + tests
+**Deliverables**: `models/svi/` (svi.py, calibration.py), `experiments/eval_svi.py` + tests (14 tests, 235 total)
 
-- `models/svi/svi.py` — Gatheral's raw SVI: `w(k) = a + b*(rho*(k-m) + sqrt((k-m)^2 + sigma^2))`
-- `models/svi/calibration.py` — Per-slice calibration via `scipy.optimize.minimize`. Interpolate parameters across tau for missing slices.
+- Raw SVI: w(k) = a + b·[ρ·(k-m) + √((k-m)²+σ²)], 5 params per slice
+- Per-slice calibration via scipy.optimize.minimize (L-BFGS-B)
+- SVI RMSE missing = 0.0070 vs Transformer 0.0044 (ML is 37% better)
+- SVI nearly arbitrage-free (0.05% butterfly) vs ML (45-48%)
+- Thesis narrative: SVI clean but imprecise; ML precise but dirty; constrained ML = best of both
 
-Note: SVI uses scipy.optimize, not the PyTorch training pipeline — it's a per-slice parametric fit.
+See `docs/phase7.md` for summary.
 
 ---
 
