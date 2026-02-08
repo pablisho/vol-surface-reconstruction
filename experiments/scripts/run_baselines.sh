@@ -34,7 +34,7 @@ run_if_missing "$OUT/cnn/synthetic/best_model.pt" \
     python -m experiments.train_baseline --model cnn
 
 echo ""
-echo "--- U-Net (base_channels=32, defaults) ---"
+echo "--- U-Net (base_channels=24, defaults) ---"
 run_if_missing "$OUT/unet/synthetic/best_model.pt" \
     python -m experiments.train_baseline --model unet
 

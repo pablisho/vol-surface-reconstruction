@@ -73,27 +73,27 @@ class ModelEntry:
 
 
 SYNTHETIC_MODELS: list[ModelEntry] = [
-    ModelEntry("U-Net", "unet", "synthetic", 471265),
+    ModelEntry("U-Net", "unet", "synthetic", 265321),
     ModelEntry("Transformer", "transformer", "synthetic", 288129),
-    ModelEntry("CNN", "cnn", "synthetic", 112577),
-    ModelEntry("MLP", "mlp", "synthetic", 219848),
+    ModelEntry("CNN", "cnn", "synthetic", 295257),
+    ModelEntry("MLP", "mlp", "synthetic", 285640),
     ModelEntry("Conv VAE", "conv_vae", "synthetic", 273345),
     ModelEntry("SVI", "svi", "synthetic", "40/surf"),
-    ModelEntry("FC VAE", "vae", "synthetic", 99496),
+    ModelEntry("FC VAE", "vae", "synthetic", 284664),
 ]
 
 REAL_MODELS: list[ModelEntry] = [
-    ModelEntry("CNN (FT)", "cnn", "real_ft", 112577),
+    ModelEntry("CNN (FT)", "cnn", "real_ft", 295257),
     ModelEntry("Transformer (FT)", "transformer", "real_ft_cosine_d05", 288129),
-    ModelEntry("U-Net (FT)", "unet", "real_ft", 471265),
+    ModelEntry("U-Net (FT)", "unet", "real_ft", 265321),
     ModelEntry("SVI", "svi", "real", "40/surf"),
 ]
 
 TRANSFER_MODELS: list[ModelEntry] = [
-    ModelEntry("U-Net", "unet", "transfer", 471265),
-    ModelEntry("CNN", "cnn", "transfer", 112577),
+    ModelEntry("U-Net", "unet", "transfer", 265321),
+    ModelEntry("CNN", "cnn", "transfer", 295257),
     ModelEntry("Transformer", "transformer", "transfer", 288129),
-    ModelEntry("MLP", "mlp", "transfer", 219848),
+    ModelEntry("MLP", "mlp", "transfer", 285640),
 ]
 
 

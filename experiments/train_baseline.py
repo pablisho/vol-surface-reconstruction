@@ -55,23 +55,21 @@ def build_model(
     log_moneyness: np.ndarray | None = None,
     d_model: int = 64,
     dropout: float = 0.1,
-    base_channels: int = 32,
+    base_channels: int = 24,
 ) -> SurfaceReconstructor:
     """Create a model by name."""
     if name == "mlp":
-        return MLPReconstructor(n_taus=n_taus, n_strikes=n_strikes, hidden_dims=(256, 256))
+        return MLPReconstructor(n_taus=n_taus, n_strikes=n_strikes, hidden_dims=(256, 256, 256))
     elif name == "cnn":
-        return CNNReconstructor(n_channels=64, n_layers=5)
+        return CNNReconstructor(n_channels=104, n_layers=5)
     elif name == "unet":
         return UNetReconstructor(base_channels=base_channels)
     elif name == "vae":
-        # Architecture matches Feugang Nteumagné et al. (2025):
-        # tapered encoder (128→64→32), latent_dim=16, ELU activations
         return VAEReconstructor(
             n_taus=n_taus,
             n_strikes=n_strikes,
-            hidden_dims=(128, 64, 32),
-            latent_dim=16,
+            hidden_dims=(288, 144, 72),
+            latent_dim=32,
             activation="elu",
         )
     elif name == "conv_vae":
@@ -175,7 +173,7 @@ def main() -> None:
         "--dropout", type=float, default=0.1, help="Transformer dropout (default: 0.1)"
     )
     parser.add_argument(
-        "--base-channels", type=int, default=32, help="U-Net base channels (default: 32)"
+        "--base-channels", type=int, default=24, help="U-Net base channels (default: 24)"
     )
     parser.add_argument("--tag", type=str, default=None, help="Suffix for output directory")
     parser.add_argument(
