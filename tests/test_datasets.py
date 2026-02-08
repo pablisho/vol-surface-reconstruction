@@ -103,40 +103,40 @@ class TestVolSurfaceDataset:
 
     def test_tensor_shapes(self, generated_dir: Path) -> None:
         ds = VolSurfaceDataset(generated_dir)
-        inp, target, mask = ds[0]
+        inp, target, mask, target_mask = ds[0]
         assert inp.shape == (2, len(TAUS), len(STRIKES))
         assert target.shape == (1, len(TAUS), len(STRIKES))
         assert mask.shape == (len(TAUS), len(STRIKES))
 
     def test_dtype_float32(self, generated_dir: Path) -> None:
         ds = VolSurfaceDataset(generated_dir)
-        inp, target, mask = ds[0]
+        inp, target, mask, target_mask = ds[0]
         assert inp.dtype == torch.float32
         assert target.dtype == torch.float32
         assert mask.dtype == torch.float32
 
     def test_mask_is_binary(self, generated_dir: Path) -> None:
         ds = VolSurfaceDataset(generated_dir)
-        _, _, mask = ds[0]
+        _, _, mask, _ = ds[0]
         unique = torch.unique(mask)
         assert all(v in (0.0, 1.0) for v in unique.tolist())
 
     def test_input_zeros_where_masked(self, generated_dir: Path) -> None:
         ds = VolSurfaceDataset(generated_dir)
-        inp, _, mask = ds[0]
+        inp, _, mask, _ = ds[0]
         masked_ivs = inp[0]  # channel 0
         missing = mask < 0.5
         assert torch.all(masked_ivs[missing] == 0.0)
 
     def test_target_has_full_ivs(self, generated_dir: Path) -> None:
         ds = VolSurfaceDataset(generated_dir)
-        _, target, _ = ds[0]
+        _, target, _, _ = ds[0]
         assert torch.all(target > 0)
 
     def test_different_indices_different_surfaces(self, generated_dir: Path) -> None:
         ds = VolSurfaceDataset(generated_dir)
-        _, t0, _ = ds[0]
-        _, t1, _ = ds[1]
+        _, t0, _, _ = ds[0]
+        _, t1, _, _ = ds[1]
         assert not torch.allclose(t0, t1)
 
     def test_masks_vary_across_calls(self, generated_dir: Path) -> None:

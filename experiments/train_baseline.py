@@ -123,7 +123,7 @@ def plot_sample_reconstruction(
 
     model.eval()
     for row, idx in enumerate(indices):
-        inp, target, mask = dataset[idx]
+        inp, target, mask, _target_mask = dataset[idx]
         if use_latent_opt:
             observed = target * mask.unsqueeze(0)
             pred = latent_optimize(model, observed.unsqueeze(0), mask.unsqueeze(0)).cpu()
@@ -179,6 +179,36 @@ def main() -> None:
     )
     parser.add_argument("--tag", type=str, default=None, help="Suffix for output directory")
     parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Data directory (default: data/synthetic/generated)",
+    )
+    parser.add_argument(
+        "--pretrained",
+        type=Path,
+        default=None,
+        help="Path to pretrained checkpoint to fine-tune from",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.0,
+        help="Weight decay for AdamW (default: 0.0 = plain Adam)",
+    )
+    parser.add_argument(
+        "--scheduler",
+        choices=["none", "cosine", "cosine_warmup"],
+        default="none",
+        help="LR scheduler (default: none)",
+    )
+    parser.add_argument(
+        "--warmup-epochs",
+        type=int,
+        default=5,
+        help="Warmup epochs for cosine_warmup scheduler (default: 5)",
+    )
+    parser.add_argument(
         "--lambda-calendar",
         type=float,
         default=0.0,
@@ -193,10 +223,11 @@ def main() -> None:
     args = parser.parse_args()
 
     is_vae = args.model in ("vae", "conv_vae")
-    dir_name = f"train_{args.model}"
-    if args.tag:
-        dir_name += f"_{args.tag}"
-    out_dir = BASE_OUT_DIR / dir_name
+
+    # Output directory: out/{model}/{source}_{tag}
+    source = "real" if args.data_dir and "real" in str(args.data_dir) else "synthetic"
+    variant = f"{source}_{args.tag}" if args.tag else source
+    out_dir = BASE_OUT_DIR / args.model / variant
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Load datasets ---
@@ -209,8 +240,9 @@ def main() -> None:
     else:
         train_mask_cfg = MaskConfig(mask_type="random", missing_frac=0.3)
         val_mask_cfg = MaskConfig(mask_type="random", missing_frac=0.3)
-    train_ds = VolSurfaceDataset(DATA_DIR / "train", mask_config=train_mask_cfg)
-    val_ds = VolSurfaceDataset(DATA_DIR / "val", mask_config=val_mask_cfg)
+    data_dir = args.data_dir or DATA_DIR
+    train_ds = VolSurfaceDataset(data_dir / "train", mask_config=train_mask_cfg)
+    val_ds = VolSurfaceDataset(data_dir / "val", mask_config=val_mask_cfg)
 
     n_taus = len(train_ds.taus)
     n_strikes = len(train_ds.strikes)
@@ -231,6 +263,13 @@ def main() -> None:
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {args.model} ({n_params:,} parameters)")
 
+    # --- Load pretrained weights (for fine-tuning) ---
+    if args.pretrained is not None:
+        if not args.pretrained.exists():
+            raise FileNotFoundError(f"Pretrained checkpoint not found: {args.pretrained}")
+        model.load_state_dict(torch.load(args.pretrained, weights_only=True))
+        print(f"Loaded pretrained weights from {args.pretrained}")
+
     # --- Train ---
     config = TrainConfig(
         batch_size=32,
@@ -238,8 +277,15 @@ def main() -> None:
         epochs=args.epochs or 200,
         patience=args.patience or 15,
         device="cuda" if torch.cuda.is_available() else "cpu",
+        weight_decay=args.weight_decay,
+        scheduler=args.scheduler,
+        warmup_epochs=args.warmup_epochs,
     )
     print(f"Training on {config.device} ...")
+    if config.weight_decay > 0:
+        print(f"  AdamW weight_decay={config.weight_decay}")
+    if config.scheduler != "none":
+        print(f"  Scheduler: {config.scheduler}")
 
     # --- No-arbitrage constraint ---
     constraint_fn = None
@@ -277,27 +323,33 @@ def main() -> None:
     model.eval()
 
     # Helper: collect predictions for a dataset
-    def evaluate_direct(ds: VolSurfaceDataset) -> tuple[Tensor, Tensor, Tensor]:
-        preds, tgts, msks = [], [], []
+    def evaluate_direct(
+        ds: VolSurfaceDataset,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        preds, tgts, msks, tmsks = [], [], [], []
         with torch.no_grad():
             for i in range(len(ds)):
-                inp, target, mask = ds[i]
+                inp, target, mask, target_mask = ds[i]
                 pred = model(inp.unsqueeze(0).to(device)).cpu()
                 preds.append(pred.squeeze(0))
                 tgts.append(target)
                 msks.append(mask)
-        return torch.stack(preds), torch.stack(tgts), torch.stack(msks)
+                tmsks.append(target_mask)
+        return torch.stack(preds), torch.stack(tgts), torch.stack(msks), torch.stack(tmsks)
 
-    def evaluate_latent_opt(ds: VolSurfaceDataset) -> tuple[Tensor, Tensor, Tensor]:
-        preds, tgts, msks = [], [], []
+    def evaluate_latent_opt(
+        ds: VolSurfaceDataset,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        preds, tgts, msks, tmsks = [], [], [], []
         for i in range(len(ds)):
-            inp, target, mask = ds[i]
+            inp, target, mask, target_mask = ds[i]
             observed = target * mask.unsqueeze(0)
             pred = latent_optimize(model, observed.unsqueeze(0), mask.unsqueeze(0)).cpu()
             preds.append(pred.squeeze(0))
             tgts.append(target)
             msks.append(mask)
-        return torch.stack(preds), torch.stack(tgts), torch.stack(msks)
+            tmsks.append(target_mask)
+        return torch.stack(preds), torch.stack(tgts), torch.stack(msks), torch.stack(tmsks)
 
     def print_metrics(label: str, m: ReconstructionMetrics) -> None:
         print(f"\n  {label}:")
@@ -320,25 +372,25 @@ def main() -> None:
 
     # Test set is always masked (30% missing)
     test_mask_cfg = MaskConfig(mask_type="random", missing_frac=0.3)
-    test_ds = VolSurfaceDataset(DATA_DIR / "test", mask_config=test_mask_cfg)
+    test_ds = VolSurfaceDataset(data_dir / "test", mask_config=test_mask_cfg)
 
     print(f"\nReconstruction metrics ({args.model}):")
 
     # Train/val: direct reconstruction (measures autoencoder quality)
     print("\n  --- Train set (direct) ---")
-    train_preds, train_targets, train_masks = evaluate_direct(train_ds)
-    train_metrics = compute_metrics(train_preds, train_targets, train_masks)
+    train_preds, train_targets, train_masks, train_tmsks = evaluate_direct(train_ds)
+    train_metrics = compute_metrics(train_preds, train_targets, train_masks, train_tmsks)
     print_metrics("Train (direct)", train_metrics)
 
     print("\n  --- Val set (direct) ---")
-    val_preds, val_targets, val_masks = evaluate_direct(val_ds)
-    val_metrics = compute_metrics(val_preds, val_targets, val_masks)
+    val_preds, val_targets, val_masks, val_tmsks = evaluate_direct(val_ds)
+    val_metrics = compute_metrics(val_preds, val_targets, val_masks, val_tmsks)
     print_metrics("Val (direct)", val_metrics)
 
     # Test set: direct reconstruction
     print("\n  --- Test set (direct, 30% missing) ---")
-    test_preds, test_targets, test_masks = evaluate_direct(test_ds)
-    test_direct_metrics = compute_metrics(test_preds, test_targets, test_masks)
+    test_preds, test_targets, test_masks, test_tmsks = evaluate_direct(test_ds)
+    test_direct_metrics = compute_metrics(test_preds, test_targets, test_masks, test_tmsks)
     print_metrics("Test (direct)", test_direct_metrics)
 
     results = {
@@ -379,8 +431,10 @@ def main() -> None:
     # VAE: also evaluate with latent space optimization
     if is_vae:
         print("\n  --- Test set (latent optimization, 30% missing) ---")
-        test_lo_preds, test_lo_targets, test_lo_masks = evaluate_latent_opt(test_ds)
-        test_lo_metrics = compute_metrics(test_lo_preds, test_lo_targets, test_lo_masks)
+        test_lo_preds, test_lo_targets, test_lo_masks, test_lo_tmsks = evaluate_latent_opt(test_ds)
+        test_lo_metrics = compute_metrics(
+            test_lo_preds, test_lo_targets, test_lo_masks, test_lo_tmsks
+        )
         print_metrics("Test (latent opt)", test_lo_metrics)
         results["test_latent_opt"] = metrics_to_dict(test_lo_metrics)
 

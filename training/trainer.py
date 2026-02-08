@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 from torch import Tensor, nn
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 
 from models.base import SurfaceReconstructor
@@ -34,7 +35,24 @@ def train(
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
+    if config.weight_decay > 0:
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=config.lr, weight_decay=config.weight_decay
+        )
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
+
+    # LR scheduler
+    scheduler = None
+    if config.scheduler == "cosine":
+        scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs)
+    elif config.scheduler == "cosine_warmup":
+        warmup = LinearLR(optimizer, start_factor=0.01, total_iters=config.warmup_epochs)
+        cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - config.warmup_epochs)
+        scheduler = SequentialLR(
+            optimizer, schedulers=[warmup, cosine], milestones=[config.warmup_epochs]
+        )
+
     criterion = nn.MSELoss()
 
     history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
@@ -49,15 +67,20 @@ def train(
         model.train()
         train_loss_sum = 0.0
         train_count = 0
-        for inp, target, _mask in train_loader:
+        for inp, target, _mask, target_mask in train_loader:
             inp = inp.to(device)
             target = target.to(device)
+            target_mask = target_mask.to(device)
 
             pred = model(inp)
             if hasattr(model, "training_loss"):
                 loss = model.training_loss(pred, target)
             else:
-                loss = criterion(pred, target)
+                tm = target_mask.unsqueeze(1)  # (B, 1, H, W)
+                if tm.all():
+                    loss = criterion(pred, target)
+                else:
+                    loss = ((pred - target) ** 2 * tm).sum() / tm.sum()
 
             if constraint_fn is not None:
                 loss = loss + constraint_fn(pred)
@@ -77,15 +100,20 @@ def train(
         val_loss_sum = 0.0
         val_count = 0
         with torch.no_grad():
-            for inp, target, _mask in val_loader:
+            for inp, target, _mask, target_mask in val_loader:
                 inp = inp.to(device)
                 target = target.to(device)
+                target_mask = target_mask.to(device)
 
                 pred = model(inp)
                 if hasattr(model, "training_loss"):
                     loss = model.training_loss(pred, target)
                 else:
-                    loss = criterion(pred, target)
+                    tm = target_mask.unsqueeze(1)  # (B, 1, H, W)
+                    if tm.all():
+                        loss = criterion(pred, target)
+                    else:
+                        loss = ((pred - target) ** 2 * tm).sum() / tm.sum()
 
                 if constraint_fn is not None:
                     loss = loss + constraint_fn(pred)
@@ -102,11 +130,15 @@ def train(
         if avg_val < best_val_loss:
             marker = " *"
 
+        lr_str = f"  lr={optimizer.param_groups[0]['lr']:.2e}" if scheduler else ""
         print(
             f"  Epoch {epoch + 1:3d}/{config.epochs}"
             f"  train={avg_train:.6f}  val={avg_val:.6f}"
-            f"  ({epoch_sec:.1f}s){marker}"
+            f"  ({epoch_sec:.1f}s){lr_str}{marker}"
         )
+
+        if scheduler is not None:
+            scheduler.step()
 
         # --- Early stopping + checkpointing ---
         if avg_val < best_val_loss:

@@ -7,10 +7,12 @@ slice using only observed points, and reconstructs the full surface.
 
 Usage:
     python -m experiments.eval_svi
+    python -m experiments.eval_svi --data-dir data/real/generated --tag real
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import time
 from pathlib import Path
@@ -25,15 +27,24 @@ from models.svi.calibration import calibrate_surface
 from models.svi.svi import svi_iv
 
 DATA_DIR = Path("data/synthetic/generated")
-OUT_DIR = Path("experiments/out/eval_svi")
+OUT_DIR = Path("experiments/out")
 
 
 def main() -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser(description="Evaluate SVI baseline")
+    parser.add_argument("--data-dir", type=str, default=None)
+    parser.add_argument("--tag", type=str, default=None)
+    args = parser.parse_args()
+
+    data_dir = Path(args.data_dir) if args.data_dir else DATA_DIR
+    source = "real" if args.data_dir and "real" in str(args.data_dir) else "synthetic"
+    variant = f"{source}_{args.tag}" if args.tag else source
+    out_dir = OUT_DIR / "svi" / variant
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # Load test set with 30% masking (same as ML evaluation)
     test_ds = VolSurfaceDataset(
-        DATA_DIR / "test",
+        data_dir / "test",
         mask_config=MaskConfig(mask_type="random", missing_frac=0.3),
     )
 
@@ -50,11 +61,12 @@ def main() -> None:
     preds = []
     targets = []
     masks = []
+    target_masks = []
 
     t_start = time.perf_counter()
 
     for i in range(n_test):
-        inp, target, mask = test_ds[i]
+        inp, target, mask, target_mask = test_ds[i]
 
         # Extract masked IV surface
         masked_iv = inp[0].numpy()  # (n_taus, n_strikes)
@@ -71,6 +83,7 @@ def main() -> None:
         preds.append(torch.tensor(pred_iv, dtype=torch.float32).unsqueeze(0))
         targets.append(target)
         masks.append(mask)
+        target_masks.append(target_mask)
 
         if (i + 1) % 100 == 0:
             elapsed = time.perf_counter() - t_start
@@ -83,9 +96,10 @@ def main() -> None:
     pred_stack = torch.stack(preds)
     target_stack = torch.stack(targets)
     mask_stack = torch.stack(masks)
+    target_mask_stack = torch.stack(target_masks)
 
     # Reconstruction metrics
-    metrics = compute_metrics(pred_stack, target_stack, mask_stack)
+    metrics = compute_metrics(pred_stack, target_stack, mask_stack, target_mask_stack)
     print("\nReconstruction metrics (SVI):")
     print(f"  MSE:           {metrics.mse:.6e}")
     print(f"  RMSE:          {metrics.rmse:.6f}")
@@ -135,10 +149,10 @@ def main() -> None:
         },
     }
 
-    with open(OUT_DIR / "metrics.json", "w") as f:
+    with open(out_dir / "metrics.json", "w") as f:
         json.dump(results, f, indent=2)
 
-    print(f"\nOutputs saved to {OUT_DIR}/")
+    print(f"\nOutputs saved to {out_dir}/")
 
 
 if __name__ == "__main__":

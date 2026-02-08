@@ -39,6 +39,10 @@ def calibrate_slice(
         k_obs = log_moneyness
         iv_obs = observed_iv
 
+    # No observed points — return flat default (will be ignored by metrics)
+    if len(k_obs) == 0:
+        return SVIParams(a=0.04, b=0.1, rho=-0.3, m=0.0, sigma=0.1)
+
     w_obs = iv_obs**2 * tau
 
     # Initialization heuristic

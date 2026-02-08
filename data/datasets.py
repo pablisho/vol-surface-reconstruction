@@ -104,6 +104,12 @@ class VolSurfaceDataset(Dataset):
         data = np.load(data_dir / "surfaces.npz")
         self.ivs = data["ivs"]  # (n_surfaces, n_taus, n_strikes)
 
+        # Load real-data masks if present (None for synthetic data)
+        if "masks" in data:
+            self.real_masks = data["masks"].astype(bool)  # (n_surfaces, n_taus, n_strikes)
+        else:
+            self.real_masks = None
+
         # Load metadata for grid info
         with open(data_dir / "metadata.json") as f:
             meta = json.load(f)
@@ -115,13 +121,19 @@ class VolSurfaceDataset(Dataset):
     def __len__(self) -> int:
         return len(self.ivs)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         ivs = self.ivs[idx]  # (n_taus, n_strikes)
         shape = ivs.shape
 
         # Generate on-the-fly mask (different each call)
         rng = np.random.default_rng()
         mask = self._make_mask(shape, rng)
+
+        # Combine with real-data mask if present
+        if self.real_masks is not None:
+            mask = mask & self.real_masks[idx]
 
         # Input: 2 channels — masked IVs (zeros where missing) + mask indicator
         masked_ivs = ivs * mask
@@ -130,10 +142,19 @@ class VolSurfaceDataset(Dataset):
         # Target: full surface
         target = ivs[np.newaxis, ...]  # (1, n_taus, n_strikes)
 
+        # Target validity mask: which points have valid ground truth
+        # For synthetic data (no real_masks), all points are valid.
+        # For real data, only points with actual market data are valid.
+        if self.real_masks is not None:
+            target_mask = self.real_masks[idx]
+        else:
+            target_mask = np.ones(shape, dtype=bool)
+
         return (
             torch.tensor(inp, dtype=torch.float32),
             torch.tensor(target, dtype=torch.float32),
             torch.tensor(mask, dtype=torch.float32),
+            torch.tensor(target_mask, dtype=torch.float32),
         )
 
     def _make_mask(self, shape: tuple[int, int], rng: np.random.Generator) -> np.ndarray:

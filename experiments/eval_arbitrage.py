@@ -36,10 +36,8 @@ def main() -> None:
     parser.add_argument("--base-channels", type=int, default=32)
     args = parser.parse_args()
 
-    dir_name = f"train_{args.model}"
-    if args.tag:
-        dir_name += f"_{args.tag}"
-    out_dir = BASE_OUT_DIR / dir_name
+    variant = f"synthetic_{args.tag}" if args.tag else "synthetic"
+    out_dir = BASE_OUT_DIR / args.model / variant
     ckpt_path = out_dir / "best_model.pt"
 
     if not ckpt_path.exists():
@@ -76,15 +74,16 @@ def main() -> None:
     cal_total, but_total = 0, 0
     cal_checks, but_checks = 0, 0
     cal_max, but_max = 0.0, 0.0
-    preds, targets, masks = [], [], []
+    preds, targets, masks, target_masks = [], [], [], []
 
     with torch.no_grad():
         for i in range(len(test_ds)):
-            inp, target, mask = test_ds[i]
+            inp, target, mask, target_mask = test_ds[i]
             pred = model(inp.unsqueeze(0).to(device)).cpu()
             preds.append(pred.squeeze(0))
             targets.append(target)
             masks.append(mask)
+            target_masks.append(target_mask)
 
             pred_iv = pred.squeeze(0).squeeze(0).numpy()
             report = surface_arbitrage_report(pred_iv, test_ds.taus, test_ds.log_moneyness)
@@ -107,7 +106,9 @@ def main() -> None:
         gt_but_checks += report["butterfly"]["total_checks"]
 
     # Reconstruction metrics
-    metrics = compute_metrics(torch.stack(preds), torch.stack(targets), torch.stack(masks))
+    metrics = compute_metrics(
+        torch.stack(preds), torch.stack(targets), torch.stack(masks), torch.stack(target_masks)
+    )
 
     print("Reconstruction metrics:")
     print(f"  RMSE missing:  {metrics.rmse_missing:.6f}")
