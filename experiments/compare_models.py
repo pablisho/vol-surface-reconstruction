@@ -399,22 +399,19 @@ def generate_arbitrage_table() -> str:
 
 
 def fig_rmse_bar_chart() -> matplotlib.figure.Figure:
-    """Grouped bar chart: RMSE_missing for all models, synthetic + real."""
+    """Grouped bar chart: RMSE_missing for all models, synthetic + real.
+
+    Real panel shows from-scratch vs fine-tuned side by side, plus SVI.
+    """
     synth_data = []
     for e in SYNTHETIC_MODELS:
         m = load_metrics(e.model, e.variant)
         rmse = extract_rmse_missing(m) if m else None
         synth_data.append((e.display_name, rmse))
 
-    real_data = []
-    for e in REAL_MODELS:
-        m = load_metrics(e.model, e.variant)
-        rmse = extract_rmse_missing(m) if m else None
-        real_data.append((e.display_name, rmse))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-
-    # Synthetic
+    # Synthetic panel — horizontal bars
     names = [d[0] for d in synth_data if d[1] is not None]
     vals = [d[1] for d in synth_data if d[1] is not None]
     colors = [MODEL_COLORS.get(n, "#333333") for n in names]
@@ -423,17 +420,49 @@ def fig_rmse_bar_chart() -> matplotlib.figure.Figure:
     ax1.set_title("Synthetic (Heston)")
     ax1.invert_yaxis()
 
-    # Real
-    names_r = [d[0] for d in real_data if d[1] is not None]
-    vals_r = [d[1] for d in real_data if d[1] is not None]
-    # Map FT names back to base for color lookup
-    colors_r = []
-    for n in names_r:
-        base = n.replace(" (FT)", "")
-        colors_r.append(MODEL_COLORS.get(base, "#333333"))
-    ax2.barh(names_r, vals_r, color=colors_r)
+    # Real panel — grouped bars: scratch vs FT for each model, plus SVI
+    real_models = ["CNN", "U-Net", "Transformer"]
+    scratch_entries = {e.display_name: e for e in REAL_MODELS_SCRATCH}
+    ft_entries = {e.display_name.replace(" (FT)", ""): e for e in REAL_MODELS_FT}
+
+    scratch_vals, ft_vals = [], []
+    model_labels = []
+    for name in real_models:
+        s_entry = scratch_entries.get(name)
+        f_entry = ft_entries.get(name)
+        s_m = load_metrics(s_entry.model, s_entry.variant) if s_entry else None
+        f_m = load_metrics(f_entry.model, f_entry.variant) if f_entry else None
+        s_rmse = extract_rmse_missing(s_m) if s_m else 0
+        f_rmse = extract_rmse_missing(f_m) if f_m else 0
+        scratch_vals.append(s_rmse)
+        ft_vals.append(f_rmse)
+        model_labels.append(name)
+
+    # SVI
+    svi_entry = REAL_MODELS_SVI[0] if REAL_MODELS_SVI else None
+    svi_m = load_metrics(svi_entry.model, svi_entry.variant) if svi_entry else None
+    svi_rmse = extract_rmse_missing(svi_m) if svi_m else None
+
+    y = np.arange(len(model_labels))
+    height = 0.35
+    ax2.barh(y - height / 2, scratch_vals, height, label="From scratch", color="#5da5da")
+    ax2.barh(y + height / 2, ft_vals, height, label="Fine-tuned", color="#faa43a")
+    if svi_rmse is not None:
+        ax2.barh(
+            len(model_labels),
+            svi_rmse,
+            height * 2,
+            color=MODEL_COLORS.get("SVI", "#7f7f7f"),
+            label="SVI",
+        )
+        model_labels = model_labels + ["SVI"]
+        y = np.arange(len(model_labels))
+
+    ax2.set_yticks(y)
+    ax2.set_yticklabels(model_labels)
     ax2.set_xlabel(r"RMSE$_\text{missing}$")
-    ax2.set_title("Real (SPY, fine-tuned)")
+    ax2.set_title("Real (SPY)")
+    ax2.legend(fontsize=8)
     ax2.invert_yaxis()
 
     fig.tight_layout()
@@ -715,25 +744,31 @@ def _annotate_lambda_points(
     lams: list[float],
     color: str,
 ) -> None:
-    """Annotate lambda sweep points with smart label placement to reduce overlap."""
-    # Place labels alternating above/below, with first and last always labeled
+    """Annotate lambda sweep points — only key values to reduce clutter."""
+    # Only label: no reg (first), λ=0.1 (sweet spot), λ=1.0 (last)
+    key_lams = {0.0, 0.1, 1.0}
     for i, (x, y, lam) in enumerate(zip(xs, ys, lams, strict=False)):
+        if lam not in key_lams:
+            continue
         label = f"$\\lambda$={lam}" if lam > 0 else "no reg."
-        # Alternate above/below for middle points
-        if i % 2 == 0:
-            xytext = (0, 8)
-            va = "bottom"
+        # First point: right, last point: left, middle: above
+        if i == 0:
+            xytext = (8, 0)
+            ha, va = "left", "center"
+        elif i == len(xs) - 1:
+            xytext = (-8, 0)
+            ha, va = "right", "center"
         else:
-            xytext = (0, -8)
-            va = "top"
+            xytext = (0, 8)
+            ha, va = "center", "bottom"
         ax.annotate(
             label,
             (x, y),
             textcoords="offset points",
             xytext=xytext,
-            fontsize=6.5,
+            fontsize=7,
             color=color,
-            ha="center",
+            ha=ha,
             va=va,
         )
 

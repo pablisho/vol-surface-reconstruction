@@ -93,7 +93,7 @@ run_if_missing "$OUT/transformer/real_ft_d05/best_model.pt" \
 echo ""
 echo "--- SVI on real data ---"
 run_if_missing "$OUT/svi/real/metrics.json" \
-    python -m experiments.eval_svi --data-dir "$REAL_DATA" --tag real
+    python -m experiments.eval_svi --data-dir "$REAL_DATA"
 
 # --- Transfer evaluation (synthetic checkpoint → real test, no fine-tuning) ---
 
