@@ -493,6 +493,16 @@ def main() -> None:
     with open(out_dir / "metrics.json", "w") as f:
         json.dump(results, f, indent=2)
 
+    # --- Save training history ---
+    history_data = {
+        "train_loss": history["train_loss"],
+        "val_loss": history["val_loss"],
+        "epochs_trained": len(history["train_loss"]),
+        "total_time_s": history.get("total_time_s"),
+    }
+    with open(out_dir / "history.json", "w") as f:
+        json.dump(history_data, f, indent=2)
+
     # --- Save plots ---
     plot_loss_curve(history, out_dir / "loss_curve.png")
     plot_sample_reconstruction(

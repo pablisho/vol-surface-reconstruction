@@ -1018,7 +1018,7 @@ def fig_error_heatmaps(cache: dict) -> matplotlib.figure.Figure | None:
         return None
 
     n = len(models)
-    fig, axes = plt.subplots(1, n, figsize=(4 * n, 4), squeeze=False)
+    fig, axes = plt.subplots(1, n, figsize=(4 * n, 4), squeeze=False, constrained_layout=True)
 
     log_m = np.log(np.linspace(70, 130, 25) / 100.0)
     taus = np.array([0.08, 0.17, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0])
@@ -1045,7 +1045,6 @@ def fig_error_heatmaps(cache: dict) -> matplotlib.figure.Figure | None:
 
     fig.colorbar(im, ax=axes[0, -1], label="Mean |error|", shrink=0.8)
     fig.suptitle("Spatial Error Distribution (Synthetic, 30% missing)")
-    fig.tight_layout()
     return fig
 
 
@@ -1125,6 +1124,335 @@ def fig_regional_bar_chart(cache: dict) -> matplotlib.figure.Figure | None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Qualitative figures (recompute path — GPU required)
+# ---------------------------------------------------------------------------
+
+
+def recompute_qualitative_figures() -> None:
+    """Generate sample reconstruction, attention, and smile-slice figures.
+
+    Loads model checkpoints, selects the median-RMSE test surface
+    (by Transformer per-surface error), runs inference for all models,
+    and produces three publication-quality PDF figures.
+    """
+    import torch
+
+    from data.datasets import MaskConfig, VolSurfaceDataset
+    from evaluation.comparison import per_surface_rmse
+    from experiments.train_baseline import build_model
+    from models.svi.calibration import calibrate_surface
+    from models.svi.svi import svi_iv
+
+    DATA_DIR = Path("data/synthetic/generated")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    test_ds = VolSurfaceDataset(
+        DATA_DIR / "test", mask_config=MaskConfig(mask_type="random", missing_frac=0.3)
+    )
+    log_m = test_ds.log_moneyness
+    taus = test_ds.taus
+
+    # --- Load Transformer and find median-RMSE surface ---
+    ckpt_path = OUT_DIR / "transformer" / "synthetic" / "best_model.pt"
+    if not ckpt_path.exists():
+        print("  Transformer checkpoint not found, skipping qualitative figures")
+        return
+
+    trans_model = build_model(
+        "transformer", len(taus), len(test_ds.strikes), taus=taus, log_moneyness=log_m
+    )
+    trans_model.load_state_dict(torch.load(ckpt_path, weights_only=True))
+    trans_model = trans_model.to(device).eval()
+
+    # Collect all test data
+    all_inputs, all_targets, all_masks, all_tmsks = [], [], [], []
+    for i in range(len(test_ds)):
+        inp, target, mask, tmsk = test_ds[i]
+        all_inputs.append(inp)
+        all_targets.append(target)
+        all_masks.append(mask)
+        all_tmsks.append(tmsk)
+
+    target_stack = torch.stack(all_targets)
+    mask_stack = torch.stack(all_masks)
+    tmsk_stack = torch.stack(all_tmsks)
+
+    # Run Transformer inference on full test set
+    trans_preds = []
+    with torch.no_grad():
+        for inp in all_inputs:
+            pred = trans_model(inp.unsqueeze(0).to(device)).cpu()
+            trans_preds.append(pred.squeeze(0))
+    trans_pred_stack = torch.stack(trans_preds)
+
+    # Select median surface
+    rmses = per_surface_rmse(trans_pred_stack, target_stack, mask_stack, tmsk_stack)
+    median_idx = int(np.argsort(rmses)[len(rmses) // 2])
+    print(f"  Median surface: idx={median_idx}, RMSE={rmses[median_idx]:.6f}")
+
+    # Extract data for median surface
+    inp_tensor = all_inputs[median_idx]  # (2, n_taus, n_strikes)
+    gt = all_targets[median_idx][0].numpy()  # (n_taus, n_strikes)
+    obs_mask = inp_tensor[1].numpy().astype(bool)
+    trans_pred = trans_preds[median_idx][0].numpy()
+
+    # --- Load other ML models ---
+    model_preds = {"Transformer": trans_pred}
+
+    for model_name, dir_name in [("U-Net", "unet"), ("CNN", "cnn")]:
+        ckpt = OUT_DIR / dir_name / "synthetic" / "best_model.pt"
+        if not ckpt.exists():
+            print(f"  {model_name} checkpoint not found, skipping")
+            continue
+        m = build_model(dir_name, len(taus), len(test_ds.strikes), taus=taus, log_moneyness=log_m)
+        m.load_state_dict(torch.load(ckpt, weights_only=True))
+        m = m.to(device).eval()
+        with torch.no_grad():
+            pred = m(inp_tensor.unsqueeze(0).to(device)).cpu()
+        model_preds[model_name] = pred[0, 0].numpy()
+
+    # --- SVI ---
+    masked_iv = inp_tensor[0].numpy()
+    params_list = calibrate_surface(log_m, masked_iv, taus, obs_mask)
+    svi_pred = np.zeros_like(gt)
+    for j, (params, tau) in enumerate(zip(params_list, taus, strict=True)):
+        svi_pred[j] = svi_iv(log_m, float(tau), params)
+    model_preds["SVI"] = svi_pred
+
+    # --- Generate figures ---
+    fig = fig_sample_reconstruction(gt, obs_mask, model_preds, taus, log_m)
+    save_fig(fig, "sample_reconstruction")
+
+    fig = fig_smile_slices(gt, model_preds, obs_mask, taus, log_m)
+    save_fig(fig, "smile_slices")
+
+    # Attention heatmap (Transformer only)
+    fig = fig_attention_heatmap(trans_model, inp_tensor, obs_mask, taus, log_m, device)
+    save_fig(fig, "attention_heatmap")
+
+
+def fig_sample_reconstruction(
+    gt: np.ndarray,
+    obs_mask: np.ndarray,
+    model_preds: dict[str, np.ndarray],
+    taus: np.ndarray,
+    log_m: np.ndarray,
+) -> matplotlib.figure.Figure:
+    """2x3 heatmap: GT, Masked Input, Transformer / U-Net, CNN, SVI."""
+    vmin, vmax = gt.min(), gt.max()
+
+    # Build masked input for display
+    masked_display = np.where(obs_mask, gt, np.nan)
+
+    panels = [
+        ("Ground Truth", gt),
+        ("Masked Input", masked_display),
+        ("Transformer", model_preds.get("Transformer")),
+        ("U-Net", model_preds.get("U-Net")),
+        ("CNN", model_preds.get("CNN")),
+        ("SVI", model_preds.get("SVI")),
+    ]
+
+    fig, axes = plt.subplots(2, 3, figsize=(13, 7), constrained_layout=True)
+    cmap = plt.cm.viridis.copy()
+    cmap.set_bad(color="white")
+
+    for ax, (title, data) in zip(axes.flat, panels, strict=True):
+        if data is None:
+            ax.set_visible(False)
+            continue
+        im = ax.imshow(
+            data,
+            aspect="auto",
+            origin="lower",
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            extent=[log_m[0], log_m[-1], taus[0], taus[-1]],
+        )
+        ax.set_title(title)
+        ax.set_xlabel("Log-moneyness")
+        ax.set_ylabel(r"$\tau$ (years)")
+
+    fig.colorbar(im, ax=axes, label="Implied Volatility", shrink=0.8)
+    return fig
+
+
+def fig_attention_heatmap(
+    model,
+    inp_tensor,
+    obs_mask: np.ndarray,
+    taus: np.ndarray,
+    log_m: np.ndarray,
+    device=None,
+) -> matplotlib.figure.Figure | None:
+    """1x3 attention heatmap for 3 representative missing tokens."""
+    import torch
+
+    from experiments.attention_utils import capture_cross_attention
+
+    if device is None:
+        device = next(model.parameters()).device
+
+    n_taus, n_strikes = len(taus), len(log_m)
+    flat_mask = obs_mask.flatten()  # (200,)
+    missing_indices = np.where(~flat_mask)[0]
+
+    if len(missing_indices) < 3:
+        print("  Too few missing tokens for attention figure")
+        return None
+
+    # Select 3 representative missing tokens by grid position
+    # Target: ATM short, OTM long, deep OTM wing
+    target_positions = [
+        (2, n_strikes // 2),  # tau=0.25, ATM
+        (7, 4),  # tau=2.0, OTM put
+        (3, 20),  # tau=0.5, OTM call
+    ]
+    query_indices = []
+    query_labels = []
+    for ti, ki in target_positions:
+        flat_idx = ti * n_strikes + ki
+        if not flat_mask[flat_idx]:  # token is actually missing
+            query_indices.append(flat_idx)
+            query_labels.append(f"$\\tau$={taus[ti]:.2f}, $k$={log_m[ki]:.2f}")
+        else:
+            # Find nearest missing token
+            dists = np.abs(missing_indices - flat_idx)
+            nearest = missing_indices[np.argmin(dists)]
+            query_indices.append(nearest)
+            ni_tau = nearest // n_strikes
+            ni_k = nearest % n_strikes
+            query_labels.append(f"$\\tau$={taus[ni_tau]:.2f}, $k$={log_m[ni_k]:.2f}")
+
+    # Run inference with attention capture
+    model.eval()
+    with torch.no_grad():
+        with capture_cross_attention(model) as attn_weights:
+            model(inp_tensor.unsqueeze(0).to(device))
+
+    # Use last decoder layer, head-averaged
+    last_layer = max(attn_weights.keys())
+    attn = attn_weights[last_layer][0].cpu().numpy()  # (tgt_len, src_len)
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+    for ax, qi, label in zip(axes, query_indices, query_labels, strict=True):
+        # Reshape attention weights to grid
+        attn_grid = attn[qi].reshape(n_taus, n_strikes)
+
+        im = ax.imshow(
+            attn_grid,
+            aspect="auto",
+            origin="lower",
+            cmap="YlOrRd",
+            extent=[log_m[0], log_m[-1], taus[0], taus[-1]],
+        )
+        ax.set_title(f"Query: {label}", fontsize=9)
+        ax.set_xlabel("Log-moneyness")
+        ax.set_ylabel(r"$\tau$ (years)")
+
+        # Mark the query token position
+        qi_tau = taus[qi // n_strikes]
+        qi_k = log_m[qi % n_strikes]
+        ax.plot(qi_k, qi_tau, "s", color="blue", markersize=8, markeredgecolor="white", zorder=5)
+
+        # Mark missing positions with small dots
+        for mi in missing_indices:
+            mt = taus[mi // n_strikes]
+            mk = log_m[mi % n_strikes]
+            ax.plot(mk, mt, ".", color="gray", markersize=2, alpha=0.3)
+
+        fig.colorbar(im, ax=ax, shrink=0.8)
+
+    fig.suptitle("Transformer Cross-Attention Weights (Last Decoder Layer)", fontsize=11)
+    fig.subplots_adjust(top=0.88, wspace=0.4)
+    return fig
+
+
+def fig_smile_slices(
+    gt: np.ndarray,
+    model_preds: dict[str, np.ndarray],
+    obs_mask: np.ndarray,
+    taus: np.ndarray,
+    log_m: np.ndarray,
+) -> matplotlib.figure.Figure:
+    """1x3 panel: GT vs model predictions at 3 tenors."""
+    # Select tenor indices closest to 0.25, 0.75, 2.0
+    target_taus = [0.25, 0.75, 2.0]
+    tau_indices = [int(np.argmin(np.abs(taus - t))) for t in target_taus]
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+    for ax, ti in zip(axes, tau_indices, strict=True):
+        tau_val = taus[ti]
+        slice_mask = obs_mask[ti].astype(bool)
+
+        # Ground truth
+        ax.plot(log_m, gt[ti], "k-", linewidth=2, label="Ground Truth")
+
+        # Mark observed vs missing
+        ax.plot(
+            log_m[slice_mask], gt[ti][slice_mask], "ko", markersize=4, label="Observed", zorder=5
+        )
+        ax.plot(
+            log_m[~slice_mask],
+            gt[ti][~slice_mask],
+            "ko",
+            markersize=4,
+            fillstyle="none",
+            label="Missing",
+            zorder=5,
+        )
+
+        # Model predictions
+        for name in ["Transformer", "CNN", "SVI"]:
+            pred = model_preds.get(name)
+            if pred is not None:
+                color = MODEL_COLORS.get(name, "gray")
+                ax.plot(log_m, pred[ti], "--", color=color, linewidth=1.5, label=name)
+
+        ax.set_title(f"$\\tau$ = {tau_val:.2f}y")
+        ax.set_xlabel("Log-moneyness")
+        ax.set_ylabel("Implied Volatility")
+        ax.legend(fontsize=7, loc="upper right")
+
+    fig.tight_layout()
+    return fig
+
+
+def generate_computational_table() -> str | None:
+    """Read benchmark.json and format as booktabs LaTeX table."""
+    bench_path = COMPARE_DIR / "benchmark.json"
+    if not bench_path.exists():
+        return None
+    with open(bench_path) as f:
+        data = json.load(f)
+
+    lines = [
+        r"\begin{tabular}{lrrrr}",
+        r"\toprule",
+        r"Model & Params & Latency (ms) & Throughput (surf/s) & GPU Memory (MB) \\",
+        r"\midrule",
+    ]
+    for name, info in data.items():
+        params = info.get("n_params", "--")
+        if isinstance(params, int):
+            params = f"{params // 1000}k"
+        lat = info.get("latency_ms", {})
+        lat_str = f"{lat.get('mean', 0):.1f}" if lat else "--"
+        tp = info.get("throughput_per_sec", 0)
+        tp_str = f"{tp:.0f}" if tp else "--"
+        mem = info.get("gpu_memory_mb", 0)
+        mem_str = f"{mem:.1f}" if mem else "--"
+        lines.append(f"{name} & {params} & {lat_str} & {tp_str} & {mem_str} \\\\")
+
+    lines.append(r"\bottomrule")
+    lines.append(r"\end{tabular}")
+    return "\n".join(lines)
+
+
 def save_fig(fig: matplotlib.figure.Figure | None, name: str) -> None:
     """Save figure as PDF."""
     if fig is None:
@@ -1179,6 +1507,13 @@ def main() -> None:
         save_fig(fig_constraint_impact(), "constraint_impact")
         save_fig(fig_pareto_lambda_sweep(), "pareto_lambda_sweep")
 
+    # --- Computational table (from benchmark.json, no GPU needed) ---
+    if do_tables:
+        tex = generate_computational_table()
+        if tex:
+            (COMPARE_DIR / "table_computational.tex").write_text(tex)
+            print(f"  Saved {COMPARE_DIR / 'table_computational.tex'}")
+
     # --- Recompute path (GPU) ---
     if args.recompute:
         print("\nRecomputing per-region metrics (GPU)...")
@@ -1189,6 +1524,9 @@ def main() -> None:
             save_fig(fig_error_heatmaps(cache), "error_heatmaps")
             save_fig(fig_rmse_boxplots(cache), "rmse_boxplots")
             save_fig(fig_regional_bar_chart(cache), "regional_bar_chart")
+
+        print("\nGenerating qualitative figures (GPU)...")
+        recompute_qualitative_figures()
 
         # Regional table
         if do_tables and cache:

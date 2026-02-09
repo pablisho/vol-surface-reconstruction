@@ -157,4 +157,6 @@ def train(
     total_sec = time.perf_counter() - t_start
     print(f"  Total training time: {total_sec:.1f}s ({total_sec / 60:.1f}m)")
 
+    history["total_time_s"] = total_sec
+
     return history
