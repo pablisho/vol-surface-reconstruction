@@ -47,46 +47,46 @@ echo ""
 echo "--- Transformer from scratch on real ---"
 run_if_missing "$OUT/transformer/real/best_model.pt" \
     python -m experiments.train_baseline --model transformer \
-        --data-dir "$REAL_DATA" --lr 1e-4 --patience 30
+        --data-dir "$REAL_DATA" --lr 1e-4
 
 # --- Fine-tuned from synthetic checkpoints ---
 
 echo ""
-echo "--- CNN fine-tuned (lr=1e-5, patience=30) ---"
+echo "--- CNN fine-tuned (lr=1e-5) ---"
 run_if_missing "$OUT/cnn/real_ft/best_model.pt" \
     python -m experiments.train_baseline --model cnn \
         --data-dir "$REAL_DATA" \
-        --lr 1e-5 --patience 30 \
+        --lr 1e-5 \
         --pretrained "$OUT/cnn/synthetic/best_model.pt" \
         --tag ft
 
 echo ""
-echo "--- U-Net fine-tuned (lr=1e-5, patience=30) ---"
+echo "--- U-Net fine-tuned (lr=1e-5) ---"
 run_if_missing "$OUT/unet/real_ft/best_model.pt" \
     python -m experiments.train_baseline --model unet \
         --data-dir "$REAL_DATA" \
-        --lr 1e-5 --patience 30 \
+        --lr 1e-5 \
         --pretrained "$OUT/unet/synthetic/best_model.pt" \
         --tag ft
 
 echo ""
-echo "--- MLP fine-tuned (lr=1e-5, patience=30) ---"
+echo "--- MLP fine-tuned (lr=1e-5) ---"
 run_if_missing "$OUT/mlp/real_ft/best_model.pt" \
     python -m experiments.train_baseline --model mlp \
         --data-dir "$REAL_DATA" \
-        --lr 1e-5 --patience 30 \
+        --lr 1e-5 \
         --pretrained "$OUT/mlp/synthetic/best_model.pt" \
         --tag ft
 
 echo ""
-echo "--- Transformer fine-tuned (cosine, dropout=0.05, lr=1e-4) ---"
-run_if_missing "$OUT/transformer/real_ft_cosine_d05/best_model.pt" \
+echo "--- Transformer fine-tuned (dropout=0.05, lr=1e-4) ---"
+run_if_missing "$OUT/transformer/real_ft_d05/best_model.pt" \
     python -m experiments.train_baseline --model transformer \
         --data-dir "$REAL_DATA" \
-        --lr 1e-4 --patience 30 --epochs 300 \
-        --dropout 0.05 --scheduler cosine \
+        --lr 1e-4 \
+        --dropout 0.05 \
         --pretrained "$OUT/transformer/synthetic/best_model.pt" \
-        --tag ft_cosine_d05
+        --tag ft_d05
 
 # --- SVI on real data ---
 
@@ -94,6 +94,28 @@ echo ""
 echo "--- SVI on real data ---"
 run_if_missing "$OUT/svi/real/metrics.json" \
     python -m experiments.eval_svi --data-dir "$REAL_DATA" --tag real
+
+# --- Transfer evaluation (synthetic checkpoint → real test, no fine-tuning) ---
+
+echo ""
+echo "--- Transfer eval: CNN (synthetic → real, no FT) ---"
+run_if_missing "$OUT/cnn/transfer/metrics.json" \
+    python -m experiments.eval_real_transfer --model cnn
+
+echo ""
+echo "--- Transfer eval: U-Net (synthetic → real, no FT) ---"
+run_if_missing "$OUT/unet/transfer/metrics.json" \
+    python -m experiments.eval_real_transfer --model unet
+
+echo ""
+echo "--- Transfer eval: MLP (synthetic → real, no FT) ---"
+run_if_missing "$OUT/mlp/transfer/metrics.json" \
+    python -m experiments.eval_real_transfer --model mlp
+
+echo ""
+echo "--- Transfer eval: Transformer (synthetic → real, no FT) ---"
+run_if_missing "$OUT/transformer/transfer/metrics.json" \
+    python -m experiments.eval_real_transfer --model transformer
 
 echo ""
 echo "=========================================="

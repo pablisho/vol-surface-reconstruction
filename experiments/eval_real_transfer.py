@@ -44,7 +44,7 @@ def main() -> None:
     )
     parser.add_argument("--tag", type=str, default=None)
     parser.add_argument("--d-model", type=int, default=64)
-    parser.add_argument("--base-channels", type=int, default=32)
+    parser.add_argument("--base-channels", type=int, default=24)
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -33,7 +33,7 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default=None, help="Output directory suffix")
     parser.add_argument("--d-model", type=int, default=64)
     parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--base-channels", type=int, default=32)
+    parser.add_argument("--base-channels", type=int, default=24)
     args = parser.parse_args()
 
     variant = f"synthetic_{args.tag}" if args.tag else "synthetic"

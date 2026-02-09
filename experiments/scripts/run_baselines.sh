@@ -2,6 +2,7 @@
 # Reproduce all synthetic baseline trainings (Phases 3-5, 7).
 # Skip runs that already have a best_model.pt (or metrics.json for SVI).
 #
+# All models: lr=1e-3, patience=30, epochs=200 (except Transformer: lr=1e-4)
 # Estimated time: ~2 hours GPU
 set -euo pipefail
 
@@ -24,17 +25,17 @@ echo "=========================================="
 # --- Phase 3: MLP, CNN, U-Net ---
 
 echo ""
-echo "--- MLP (defaults: lr=1e-3, patience=15, epochs=200) ---"
+echo "--- MLP ---"
 run_if_missing "$OUT/mlp/synthetic/best_model.pt" \
     python -m experiments.train_baseline --model mlp
 
 echo ""
-echo "--- CNN (defaults: lr=1e-3, patience=15, epochs=200) ---"
+echo "--- CNN ---"
 run_if_missing "$OUT/cnn/synthetic/best_model.pt" \
     python -m experiments.train_baseline --model cnn
 
 echo ""
-echo "--- U-Net (base_channels=24, defaults) ---"
+echo "--- U-Net ---"
 run_if_missing "$OUT/unet/synthetic/best_model.pt" \
     python -m experiments.train_baseline --model unet
 
@@ -53,9 +54,9 @@ run_if_missing "$OUT/conv_vae/synthetic/best_model.pt" \
 # --- Phase 5: Transformer ---
 
 echo ""
-echo "--- Transformer (d_model=64, lr=1e-4, patience=30) ---"
+echo "--- Transformer (d_model=64, lr=1e-4) ---"
 run_if_missing "$OUT/transformer/synthetic/best_model.pt" \
-    python -m experiments.train_baseline --model transformer --lr 1e-4 --patience 30
+    python -m experiments.train_baseline --model transformer --lr 1e-4
 
 # --- Phase 7: SVI ---
 

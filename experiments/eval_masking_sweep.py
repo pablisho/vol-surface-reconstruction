@@ -143,8 +143,13 @@ def compute_arbitrage(preds, taus, log_moneyness):
     }
 
 
-def run_sweep(model_name: str, variant: str = "synthetic") -> None:
+def run_sweep(model_name: str, variant: str = "synthetic", force: bool = False) -> None:
     """Run masking sweep for a single model."""
+    out_path = OUT_DIR / model_name / variant / "masking_sweep.json"
+    if out_path.exists() and not force:
+        print(f"\n  [SKIP] {out_path} exists (use --force to re-run)")
+        return
+
     print(f"\n{'=' * 60}")
     print(f"Masking sweep: {model_name} ({variant})")
     print(f"{'=' * 60}")
@@ -219,16 +224,17 @@ def main() -> None:
     )
     parser.add_argument("--variant", type=str, default="synthetic", help="Variant subdirectory")
     parser.add_argument("--all", action="store_true", help="Run all models")
+    parser.add_argument("--force", action="store_true", help="Re-run even if results exist")
     args = parser.parse_args()
 
     if args.all:
         for model_name in ALL_MODELS:
             try:
-                run_sweep(model_name, args.variant)
+                run_sweep(model_name, args.variant, force=args.force)
             except FileNotFoundError as e:
                 print(f"  Skipping {model_name}: {e}")
     elif args.model:
-        run_sweep(args.model, args.variant)
+        run_sweep(args.model, args.variant, force=args.force)
     else:
         parser.error("Specify --model or --all")
 

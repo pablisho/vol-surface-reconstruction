@@ -272,8 +272,8 @@ def main() -> None:
     config = TrainConfig(
         batch_size=32,
         lr=args.lr or 1e-3,
-        epochs=args.epochs or 200,
-        patience=args.patience or 15,
+        epochs=args.epochs or 500,
+        patience=args.patience or 30,
         device="cuda" if torch.cuda.is_available() else "cpu",
         weight_decay=args.weight_decay,
         scheduler=args.scheduler,

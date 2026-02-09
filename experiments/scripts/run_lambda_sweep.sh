@@ -6,6 +6,7 @@
 # This trains the remaining (model, λ) combinations.
 # Skip runs that already have a best_model.pt.
 #
+# All use patience=30 (default). Transformer uses lr=1e-4.
 # Estimated time: ~3 hours GPU (up to 14 training runs)
 set -euo pipefail
 
@@ -34,7 +35,7 @@ for LAM in "${LAMBDAS[@]}"; do
     echo "--- Transformer λ=${LAM} (tag=${TAG}) ---"
     run_if_missing "$OUT/transformer/synthetic_${TAG}/best_model.pt" \
         python -m experiments.train_baseline --model transformer \
-            --lr 1e-4 --patience 30 \
+            --lr 1e-4 \
             --lambda-butterfly "$LAM" --tag "$TAG"
 
     echo ""
