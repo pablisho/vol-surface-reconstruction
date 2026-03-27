@@ -39,35 +39,50 @@ class CoordinateEncoding(nn.Module):
     ) -> None:
         super().__init__()
         self.n_freq = n_freq
+        n_tokens = len(taus) * len(log_moneyness)
 
-        # Build coordinate grid: (n_taus * n_strikes, 2)
-        # Grid ordering: tau varies slowest (row-major flatten of (n_taus, n_strikes))
-        tau_grid, lm_grid = torch.meshgrid(taus, log_moneyness, indexing="ij")
-        coords = torch.stack([tau_grid.reshape(-1), lm_grid.reshape(-1)], dim=-1)
+        if n_freq == 0:
+            # Learnable positional embedding (ablation: no Fourier features)
+            # Use the same coord_dim as Fourier with n_freq=8 (=34) for fair comparison
+            self._learnable_dim = 34
+            self.learnable_pe = nn.Parameter(torch.randn(n_tokens, self._learnable_dim) * 0.02)
+            self.register_buffer("encoding", torch.empty(0))  # unused placeholder
+        else:
+            self.learnable_pe = None
+            self._learnable_dim = 0
 
-        # Frequency bands: [pi, 2*pi, 4*pi, ..., 2^(L-1)*pi]
-        freqs = math.pi * (2.0 ** torch.arange(n_freq, dtype=torch.float32))
+            # Build coordinate grid: (n_taus * n_strikes, 2)
+            # Grid ordering: tau varies slowest (row-major flatten of (n_taus, n_strikes))
+            tau_grid, lm_grid = torch.meshgrid(taus, log_moneyness, indexing="ij")
+            coords = torch.stack([tau_grid.reshape(-1), lm_grid.reshape(-1)], dim=-1)
 
-        # Compute encoding for each coordinate dimension
-        # Per coord: raw value + L * (sin, cos) = 1 + 2L features
-        parts: list[Tensor] = []
-        for dim in range(2):
-            x = coords[:, dim : dim + 1]  # (n_tokens, 1)
-            parts.append(x)
-            # Vectorized sin/cos over all frequencies
-            # x: (n_tokens, 1), freqs: (L,) -> scaled: (n_tokens, L)
-            scaled = x * freqs.unsqueeze(0)
-            parts.append(torch.sin(scaled))
-            parts.append(torch.cos(scaled))
+            # Frequency bands: [pi, 2*pi, 4*pi, ..., 2^(L-1)*pi]
+            freqs = math.pi * (2.0 ** torch.arange(n_freq, dtype=torch.float32))
 
-        encoding = torch.cat(parts, dim=-1)  # (n_tokens, 2 + 4*L)
-        self.register_buffer("encoding", encoding)
+            # Compute encoding for each coordinate dimension
+            # Per coord: raw value + L * (sin, cos) = 1 + 2L features
+            parts: list[Tensor] = []
+            for dim in range(2):
+                x = coords[:, dim : dim + 1]  # (n_tokens, 1)
+                parts.append(x)
+                # Vectorized sin/cos over all frequencies
+                # x: (n_tokens, 1), freqs: (L,) -> scaled: (n_tokens, L)
+                scaled = x * freqs.unsqueeze(0)
+                parts.append(torch.sin(scaled))
+                parts.append(torch.cos(scaled))
+
+            encoding = torch.cat(parts, dim=-1)  # (n_tokens, 2 + 4*L)
+            self.register_buffer("encoding", encoding)
 
     @property
     def coord_dim(self) -> int:
         """Dimensionality of the coordinate encoding."""
+        if self.n_freq == 0:
+            return self._learnable_dim
         return 2 + 4 * self.n_freq
 
     def forward(self) -> Tensor:
-        """Return the fixed coordinate encoding: (n_tokens, coord_dim)."""
+        """Return the coordinate encoding: (n_tokens, coord_dim)."""
+        if self.learnable_pe is not None:
+            return self.learnable_pe
         return self.encoding

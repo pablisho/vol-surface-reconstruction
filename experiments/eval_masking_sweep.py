@@ -143,15 +143,22 @@ def compute_arbitrage(preds, taus, log_moneyness):
     }
 
 
-def run_sweep(model_name: str, variant: str = "synthetic", force: bool = False) -> None:
+def run_sweep(
+    model_name: str,
+    variant: str = "synthetic",
+    force: bool = False,
+    mask_type: str = "random",
+    wing_threshold: float | None = None,
+) -> None:
     """Run masking sweep for a single model."""
-    out_path = OUT_DIR / model_name / variant / "masking_sweep.json"
+    suffix = f"_{'_'.join(mask_type.split('+'))}" if mask_type != "random" else ""
+    out_path = OUT_DIR / model_name / variant / f"masking_sweep{suffix}.json"
     if out_path.exists() and not force:
         print(f"\n  [SKIP] {out_path} exists (use --force to re-run)")
         return
 
     print(f"\n{'=' * 60}")
-    print(f"Masking sweep: {model_name} ({variant})")
+    print(f"Masking sweep: {model_name} ({variant}, mask_type={mask_type})")
     print(f"{'=' * 60}")
 
     is_vae = model_name in ("vae", "conv_vae")
@@ -166,15 +173,23 @@ def run_sweep(model_name: str, variant: str = "synthetic", force: bool = False) 
         model = build_model(model_name, ref_ds, variant)
         model = model.to(device)
 
-    results = {"model": model_name, "variant": variant, "masking_levels": {}}
+    results = {
+        "model": model_name,
+        "variant": variant,
+        "mask_type": mask_type,
+        "masking_levels": {},
+    }
 
     for frac in MASKING_LEVELS:
         t0 = time.perf_counter()
         print(f"\n  Missing fraction: {frac:.0%}")
 
+        mask_kwargs = {"mask_type": mask_type, "missing_frac": frac}
+        if wing_threshold is not None:
+            mask_kwargs["wing_threshold"] = wing_threshold
         test_ds = VolSurfaceDataset(
             DATA_DIR / "test",
-            mask_config=MaskConfig(mask_type="random", missing_frac=frac),
+            mask_config=MaskConfig(**mask_kwargs),
         )
 
         if is_svi:
@@ -207,7 +222,6 @@ def run_sweep(model_name: str, variant: str = "synthetic", force: bool = False) 
         }
 
     # Save results
-    out_path = OUT_DIR / model_name / variant / "masking_sweep.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
@@ -225,16 +239,40 @@ def main() -> None:
     parser.add_argument("--variant", type=str, default="synthetic", help="Variant subdirectory")
     parser.add_argument("--all", action="store_true", help="Run all models")
     parser.add_argument("--force", action="store_true", help="Re-run even if results exist")
+    parser.add_argument(
+        "--mask-type",
+        choices=["random", "wing", "random+wing"],
+        default="random",
+        help="Masking pattern for evaluation (default: random)",
+    )
+    parser.add_argument(
+        "--wing-threshold",
+        type=float,
+        default=None,
+        help="Override wing_threshold for wing/random+wing masking",
+    )
     args = parser.parse_args()
 
     if args.all:
         for model_name in ALL_MODELS:
             try:
-                run_sweep(model_name, args.variant, force=args.force)
+                run_sweep(
+                    model_name,
+                    args.variant,
+                    force=args.force,
+                    mask_type=args.mask_type,
+                    wing_threshold=args.wing_threshold,
+                )
             except FileNotFoundError as e:
                 print(f"  Skipping {model_name}: {e}")
     elif args.model:
-        run_sweep(args.model, args.variant, force=args.force)
+        run_sweep(
+            args.model,
+            args.variant,
+            force=args.force,
+            mask_type=args.mask_type,
+            wing_threshold=args.wing_threshold,
+        )
     else:
         parser.error("Specify --model or --all")
 

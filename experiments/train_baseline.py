@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import matplotlib
@@ -56,6 +57,7 @@ def build_model(
     d_model: int = 64,
     dropout: float = 0.1,
     base_channels: int = 24,
+    no_fourier: bool = False,
 ) -> SurfaceReconstructor:
     """Create a model by name."""
     if name == "mlp":
@@ -84,6 +86,7 @@ def build_model(
             d_model=d_model,
             d_ff=d_model * 4,
             dropout=dropout,
+            n_freq=0 if no_fourier else 8,
         )
     else:
         raise ValueError(f"Unknown model: {name!r}")
@@ -218,7 +221,22 @@ def main() -> None:
         default=0.0,
         help="Butterfly penalty weight (default: 0.0 = disabled)",
     )
+    parser.add_argument(
+        "--no-fourier",
+        action="store_true",
+        help="Transformer ablation: use learnable PE instead of Fourier encoding",
+    )
     args = parser.parse_args()
+
+    # --- Seed control (for multi-seed reproducibility) ---
+    seed_str = os.environ.get("EXPERIMENT_SEED")
+    if seed_str is not None:
+        seed = int(seed_str)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        print(f"Random seed: {seed}")
 
     is_vae = args.model in ("vae", "conv_vae")
 
@@ -257,6 +275,7 @@ def main() -> None:
         d_model=args.d_model,
         dropout=args.dropout,
         base_channels=args.base_channels,
+        no_fourier=args.no_fourier,
     )
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {args.model} ({n_params:,} parameters)")
@@ -311,6 +330,8 @@ def main() -> None:
             "train_missing_frac": 0.0 if is_vae else 0.3,
             "test_missing_frac": 0.3,
         },
+        "seed": int(seed_str) if seed_str is not None else None,
+        "no_fourier": args.no_fourier,
     }
     with open(out_dir / "config.json", "w") as f:
         json.dump(experiment_config, f, indent=2)
