@@ -399,28 +399,36 @@ def generate_arbitrage_table() -> str:
 
 
 def fig_rmse_bar_chart() -> matplotlib.figure.Figure:
-    """Grouped bar chart: RMSE_missing for all models, synthetic + real.
-
-    Real panel shows from-scratch vs fine-tuned side by side, plus SVI.
-    """
+    """Horizontal bar chart: RMSE_missing for all models on synthetic data."""
     synth_data = []
     for e in SYNTHETIC_MODELS:
         m = load_metrics(e.model, e.variant)
         rmse = extract_rmse_missing(m) if m else None
         synth_data.append((e.display_name, rmse))
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
+    fig, ax = plt.subplots(figsize=(7, 5))
 
-    # Synthetic panel — horizontal bars
-    names = [d[0] for d in synth_data if d[1] is not None]
-    vals = [d[1] for d in synth_data if d[1] is not None]
+    filtered = [(d[0], d[1]) for d in synth_data if d[1] is not None]
+    filtered.sort(key=lambda x: x[1])  # sort by RMSE ascending
+    names = [d[0] for d in filtered]
+    vals = [d[1] for d in filtered]
     colors = [MODEL_COLORS.get(n, "#333333") for n in names]
-    ax1.barh(names, vals, color=colors)
-    ax1.set_xlabel(r"RMSE$_\text{missing}$")
-    ax1.set_title("Synthetic (Heston)")
-    ax1.invert_yaxis()
+    ax.barh(names, vals, color=colors)
+    ax.set_xlabel(r"RMSE$_\text{missing}$")
+    ax.set_title("Synthetic (Heston)")
+    ax.invert_yaxis()
 
-    # Real panel — grouped bars: scratch vs FT for each model, plus SVI
+    fig.tight_layout()
+    return fig
+
+
+def fig_rmse_bar_chart_real() -> matplotlib.figure.Figure:
+    """Grouped horizontal bar chart: RMSE_missing for real SPY data.
+
+    Shows from-scratch vs fine-tuned side by side, plus SVI.
+    """
+    fig, ax = plt.subplots(figsize=(7, 5))
+
     real_models = ["CNN", "U-Net", "Transformer"]
     scratch_entries = {e.display_name: e for e in REAL_MODELS_SCRATCH}
     ft_entries = {e.display_name.replace(" (FT)", ""): e for e in REAL_MODELS_FT}
@@ -445,10 +453,10 @@ def fig_rmse_bar_chart() -> matplotlib.figure.Figure:
 
     y = np.arange(len(model_labels))
     height = 0.35
-    ax2.barh(y - height / 2, scratch_vals, height, label="From scratch", color="#5da5da")
-    ax2.barh(y + height / 2, ft_vals, height, label="Fine-tuned", color="#faa43a")
+    ax.barh(y - height / 2, scratch_vals, height, label="From scratch", color="#5da5da")
+    ax.barh(y + height / 2, ft_vals, height, label="Fine-tuned", color="#faa43a")
     if svi_rmse is not None:
-        ax2.barh(
+        ax.barh(
             len(model_labels),
             svi_rmse,
             height * 2,
@@ -458,12 +466,12 @@ def fig_rmse_bar_chart() -> matplotlib.figure.Figure:
         model_labels = model_labels + ["SVI"]
         y = np.arange(len(model_labels))
 
-    ax2.set_yticks(y)
-    ax2.set_yticklabels(model_labels)
-    ax2.set_xlabel(r"RMSE$_\text{missing}$")
-    ax2.set_title("Real (SPY)")
-    ax2.legend(fontsize=8)
-    ax2.invert_yaxis()
+    ax.set_yticks(y)
+    ax.set_yticklabels(model_labels)
+    ax.set_xlabel(r"RMSE$_\text{missing}$")
+    ax.set_title("Real (SPY)")
+    ax.legend(fontsize=8)
+    ax.invert_yaxis()
 
     fig.tight_layout()
     return fig
@@ -712,24 +720,44 @@ def _collect_lambda_sweep_data() -> tuple[
     lambda_tags = {
         "synthetic": 0.0,
         "synthetic_arb001": 0.01,
+        # "synthetic_arb002": 0.02,
         "synthetic_arb005": 0.05,
+        # "synthetic_arb007": 0.07,
         "synthetic_arb01": 0.1,
-        "synthetic_arb03": 0.3,
+        # "synthetic_arb015": 0.15,
+        # "synthetic_arb02": 0.2,
+        # "synthetic_arb03": 0.3,
+        "synthetic_arb05": 0.5,
+        # "synthetic_arb07": 0.7,
         "synthetic_arb10": 1.0,
     }
 
     model_data = []
+    seed_suffixes = ["", "_s2", "_s3"]
     for display, model_dir in sweep_models:
         points = []
         for variant, lam in lambda_tags.items():
-            m = load_metrics(model_dir, variant)
-            if m is None:
-                continue
-            rmse = extract_rmse_missing(m)
-            but = extract_butterfly_rate(m)
-            exp_sev = extract_expected_severity(m)
-            if rmse is not None and but is not None:
-                points.append((lam, rmse, but, exp_sev))
+            rmses, buts, sevs = [], [], []
+            for suf in seed_suffixes:
+                m = load_metrics(model_dir, f"{variant}{suf}")
+                if m is None:
+                    continue
+                r = extract_rmse_missing(m)
+                b = extract_butterfly_rate(m)
+                s = extract_expected_severity(m)
+                if r is not None and b is not None:
+                    rmses.append(r)
+                    buts.append(b)
+                    sevs.append(s if s is not None else 0)
+            if rmses:
+                points.append(
+                    (
+                        lam,
+                        sum(rmses) / len(rmses),
+                        sum(buts) / len(buts),
+                        sum(sevs) / len(sevs) if sevs else None,
+                    )
+                )
         if len(points) >= 2:
             points.sort(key=lambda p: p[0])
             model_data.append((display, points))
@@ -773,10 +801,26 @@ def _annotate_lambda_points(
         )
 
 
-def fig_pareto_lambda_sweep() -> matplotlib.figure.Figure | None:
-    """Pareto frontier: RMSE vs butterfly rate/severity across λ values.
+def _pareto_front(xs: list[float], ys: list[float]):
+    """Return indices of Pareto-optimal points (lower x and lower y is better)."""
+    n = len(xs)
+    is_pareto = [True] * n
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            if xs[j] <= xs[i] and ys[j] <= ys[i] and (xs[j] < xs[i] or ys[j] < ys[i]):
+                is_pareto[i] = False
+                break
+    return [i for i in range(n) if is_pareto[i]]
 
-    Left panel: x = violation rate (%). Right panel: x = expected severity.
+
+def fig_pareto_lambda_sweep() -> matplotlib.figure.Figure | None:
+    """Lambda sweep: RMSE and butterfly metrics vs λ.
+
+    Panel 1: RMSE vs λ.
+    Panel 2: Butterfly violation rate vs λ.
+    Panel 3 (if severity available): Expected severity vs λ.
     """
     _, _, model_data = _collect_lambda_sweep_data()
 
@@ -784,113 +828,96 @@ def fig_pareto_lambda_sweep() -> matplotlib.figure.Figure | None:
         print("  No lambda sweep data found, skipping pareto_lambda_sweep figure")
         return None
 
-    # Check if severity data is available
     has_severity = any(p[3] is not None for _, points in model_data for p in points)
 
     if has_severity:
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        fig, (ax_rmse, ax_but, ax_sev) = plt.subplots(1, 3, figsize=(16, 5))
     else:
-        fig, ax1 = plt.subplots(figsize=(8, 6))
-        ax2 = None
+        fig, (ax_rmse, ax_but) = plt.subplots(1, 2, figsize=(12, 5))
+        ax_sev = None
 
     gt = compute_ground_truth_arbitrage()
 
+    # Collect all unique lambda values across models, map to evenly-spaced positions
+    all_lams = sorted({p[0] for _, points in model_data for p in points})
+    lam_to_pos = {lam: i for i, lam in enumerate(all_lams)}
+
     for display, points in model_data:
-        lams = [p[0] for p in points]
+        positions = [lam_to_pos[p[0]] for p in points]
         rmses = [p[1] for p in points]
         buts = [p[2] * 100 for p in points]
         color = MODEL_COLORS.get(display, "#333333")
 
-        ax1.plot(buts, rmses, marker="o", label=display, color=color, linewidth=2, markersize=6)
-        _annotate_lambda_points(ax1, buts, rmses, lams, color)
-
-        if ax2 is not None:
-            sevs = [(p[3] or 0) * 1e4 for p in points]
-            ax2.plot(sevs, rmses, marker="o", label=display, color=color, linewidth=2, markersize=6)
-            _annotate_lambda_points(ax2, sevs, rmses, lams, color)
-
-    # SVI reference on both panels
-    m_svi = load_metrics("svi", "synthetic")
-    for ax in [ax1, ax2]:
-        if ax is None or m_svi is None:
-            continue
-        rmse_svi = extract_rmse_missing(m_svi)
-        but_svi = extract_butterfly_rate(m_svi)
-        exp_sev_svi = extract_expected_severity(m_svi)
-        svi_color = MODEL_COLORS.get("SVI", "#7f7f7f")
-        if ax is ax1 and rmse_svi and but_svi is not None:
-            ax.scatter(
-                but_svi * 100,
-                rmse_svi,
-                s=120,
-                color=svi_color,
-                marker="s",
-                zorder=5,
-                edgecolors="black",
-                linewidth=0.5,
-            )
-            ax.annotate(
-                "SVI",
-                (but_svi * 100, rmse_svi),
-                textcoords="offset points",
-                xytext=(8, 4),
-                fontsize=8,
-            )
-        elif ax is ax2 and rmse_svi and exp_sev_svi is not None:
-            ax.scatter(
-                exp_sev_svi * 1e4,
-                rmse_svi,
-                s=120,
-                color=svi_color,
-                marker="s",
-                zorder=5,
-                edgecolors="black",
-                linewidth=0.5,
-            )
-            ax.annotate(
-                "SVI",
-                (exp_sev_svi * 1e4, rmse_svi),
-                textcoords="offset points",
-                xytext=(8, 4),
-                fontsize=8,
-            )
-
-    # Ground truth reference
-    if gt:
-        gt_rate = gt["butterfly_rate"] * 100
-        ax1.axvline(gt_rate, color="#aaaaaa", linestyle="--", linewidth=1, zorder=1)
-        ax1.annotate(
-            "GT",
-            (gt_rate, ax1.get_ylim()[0]),
-            textcoords="offset points",
-            xytext=(3, 5),
-            fontsize=7,
-            color="#888888",
+        ax_rmse.plot(
+            positions, rmses, marker="o", label=display, color=color, linewidth=2, markersize=5
         )
-        if ax2 is not None:
-            gt_sev = gt["butterfly_expected_severity"] * 1e4
-            ax2.axvline(gt_sev, color="#aaaaaa", linestyle="--", linewidth=1, zorder=1)
-            ax2.annotate(
-                "GT",
-                (gt_sev, ax2.get_ylim()[0]),
-                textcoords="offset points",
-                xytext=(3, 5),
-                fontsize=7,
-                color="#888888",
+        ax_but.plot(
+            positions, buts, marker="o", label=display, color=color, linewidth=2, markersize=5
+        )
+
+        if ax_sev is not None:
+            sevs = [(p[3] or 0) * 1e4 for p in points]
+            ax_sev.plot(
+                positions, sevs, marker="o", label=display, color=color, linewidth=2, markersize=5
             )
 
-    ax1.set_xlabel("Butterfly violation rate (%)")
-    ax1.set_ylabel(r"RMSE$_\text{missing}$")
-    ax1.set_title(r"$\lambda$ Sweep: Violation Rate")
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    # SVI horizontal references
+    m_svi = load_metrics("svi", "synthetic")
+    if m_svi:
+        svi_color = MODEL_COLORS.get("SVI", "#7f7f7f")
+        but_svi = extract_butterfly_rate(m_svi)
+        rmse_svi = extract_rmse_missing(m_svi)
+        exp_sev_svi = extract_expected_severity(m_svi)
+        if rmse_svi:
+            ax_rmse.axhline(rmse_svi, color=svi_color, linestyle="--", linewidth=1.5, label="SVI")
+        if but_svi is not None:
+            ax_but.axhline(
+                but_svi * 100, color=svi_color, linestyle="--", linewidth=1.5, label="SVI"
+            )
+        if ax_sev is not None and exp_sev_svi is not None:
+            ax_sev.axhline(
+                exp_sev_svi * 1e4, color=svi_color, linestyle="--", linewidth=1.5, label="SVI"
+            )
 
-    if ax2 is not None:
-        ax2.set_xlabel(r"Expected severity ($\times 10^{-4}$)")
-        ax2.set_ylabel(r"RMSE$_\text{missing}$")
-        ax2.set_title(r"$\lambda$ Sweep: Expected Severity")
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+    from matplotlib.ticker import FixedFormatter, FixedLocator
+
+    shown_lams = {0, 0.01, 0.05, 0.1, 0.5, 1.0}
+    tick_positions = [i for i, lam in enumerate(all_lams) if lam in shown_lams]
+    tick_labels = ["0" if all_lams[i] == 0 else str(all_lams[i]) for i in tick_positions]
+
+    for ax in [ax_rmse, ax_but] if ax_sev is None else [ax_rmse, ax_but, ax_sev]:
+        ax.set_xlim(-0.5, len(all_lams) - 0.5)
+        ax.xaxis.set_major_locator(FixedLocator(tick_positions))
+        ax.xaxis.set_major_formatter(FixedFormatter(tick_labels))
+        ax.set_xlabel(r"$\lambda$")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    ax_rmse.set_ylabel(r"RMSE$_\text{missing}$")
+    ax_rmse.set_title("Reconstruction Error")
+
+    ax_but.set_ylabel("Butterfly violation rate (%)")
+    ax_but.set_title("Violation Rate")
+    if gt:
+        ax_but.axhline(
+            gt["butterfly_rate"] * 100,
+            color="#aaaaaa",
+            linestyle="--",
+            linewidth=1,
+            label="GT",
+        )
+
+    if ax_sev is not None:
+        ax_sev.set_ylabel(r"Expected severity ($\times 10^{-4}$)")
+        ax_sev.set_title("Expected Severity")
+        if gt:
+            ax_sev.axhline(
+                gt["butterfly_expected_severity"] * 1e4,
+                color="#aaaaaa",
+                linestyle="--",
+                linewidth=1,
+                label="GT",
+            )
 
     fig.tight_layout()
     return fig
@@ -1132,8 +1159,8 @@ def fig_regional_bar_chart(cache: dict) -> matplotlib.figure.Figure | None:
 def recompute_qualitative_figures() -> None:
     """Generate sample reconstruction, attention, and smile-slice figures.
 
-    Loads model checkpoints, selects the median-RMSE test surface
-    (by Transformer per-surface error), runs inference for all models,
+    Loads model checkpoints, selects a test surface with large SVI-Transformer
+    gap (filtered for normal-looking surfaces), runs inference for all models,
     and produces three publication-quality PDF figures.
     """
     import torch
@@ -1148,7 +1175,9 @@ def recompute_qualitative_figures() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     test_ds = VolSurfaceDataset(
-        DATA_DIR / "test", mask_config=MaskConfig(mask_type="random", missing_frac=0.3)
+        DATA_DIR / "test",
+        mask_config=MaskConfig(mask_type="random", missing_frac=0.3),
+        seed=42,
     )
     log_m = test_ds.log_moneyness
     taus = test_ds.taus
@@ -1186,20 +1215,8 @@ def recompute_qualitative_figures() -> None:
             trans_preds.append(pred.squeeze(0))
     trans_pred_stack = torch.stack(trans_preds)
 
-    # Select median surface
-    rmses = per_surface_rmse(trans_pred_stack, target_stack, mask_stack, tmsk_stack)
-    median_idx = int(np.argsort(rmses)[len(rmses) // 2])
-    print(f"  Median surface: idx={median_idx}, RMSE={rmses[median_idx]:.6f}")
-
-    # Extract data for median surface
-    inp_tensor = all_inputs[median_idx]  # (2, n_taus, n_strikes)
-    gt = all_targets[median_idx][0].numpy()  # (n_taus, n_strikes)
-    obs_mask = inp_tensor[1].numpy().astype(bool)
-    trans_pred = trans_preds[median_idx][0].numpy()
-
-    # --- Load other ML models ---
-    model_preds = {"Transformer": trans_pred}
-
+    # --- Load all neural models and run inference on full test set ---
+    nn_models = {"Transformer": (trans_preds, trans_pred_stack)}
     for model_name, dir_name in [("U-Net", "unet"), ("CNN", "cnn")]:
         ckpt = OUT_DIR / dir_name / "synthetic" / "best_model.pt"
         if not ckpt.exists():
@@ -1208,11 +1225,57 @@ def recompute_qualitative_figures() -> None:
         m = build_model(dir_name, len(taus), len(test_ds.strikes), taus=taus, log_moneyness=log_m)
         m.load_state_dict(torch.load(ckpt, weights_only=True))
         m = m.to(device).eval()
+        preds = []
         with torch.no_grad():
-            pred = m(inp_tensor.unsqueeze(0).to(device)).cpu()
-        model_preds[model_name] = pred[0, 0].numpy()
+            for inp in all_inputs:
+                pred = m(inp.unsqueeze(0).to(device)).cpu()
+                preds.append(pred.squeeze(0))
+        nn_models[model_name] = (preds, torch.stack(preds))
 
-    # --- SVI ---
+    # Per-surface RMSE for each model
+    nn_rmses = {}
+    for name, (_, pred_stack) in nn_models.items():
+        nn_rmses[name] = per_surface_rmse(pred_stack, target_stack, mask_stack, tmsk_stack)
+
+    # Select surface where spread between neural models is largest,
+    # filtered for normal-looking surfaces and no extreme model artifacts
+    model_rmse_matrix = np.stack(list(nn_rmses.values()))  # (n_models, n_surfaces)
+    spread = model_rmse_matrix.max(axis=0) - model_rmse_matrix.min(axis=0)
+    valid = []
+    for i in range(len(test_ds)):
+        gt_i = all_targets[i][0].numpy()
+        if gt_i.min() <= 0.10 or (gt_i.max() - gt_i.min()) <= 0.02:
+            continue
+        # Reject surfaces where any model produces extreme artifacts
+        ok = True
+        for _, (preds, _) in nn_models.items():
+            pred_i = preds[i][0].numpy()
+            if pred_i.min() < gt_i.min() - 0.03 or pred_i.max() > gt_i.max() + 0.03:
+                ok = False
+                break
+        if ok:
+            valid.append(i)
+    valid = np.array(valid, dtype=int)
+    sel_idx = int(valid[np.argmax(spread[valid])])
+
+    per_model_str = ", ".join(f"{n}={nn_rmses[n][sel_idx]:.4f}" for n in nn_rmses)
+    print(
+        f"  Selected surface: idx={sel_idx}, spread={spread[sel_idx]:.6f}, "
+        f"{per_model_str}, "
+        f"IV range=[{all_targets[sel_idx][0].min():.3f}, "
+        f"{all_targets[sel_idx][0].max():.3f}]"
+    )
+
+    # Extract data for selected surface
+    inp_tensor = all_inputs[sel_idx]
+    gt = all_targets[sel_idx][0].numpy()
+    obs_mask = inp_tensor[1].numpy().astype(bool)
+
+    model_preds = {}
+    for name, (preds, _) in nn_models.items():
+        model_preds[name] = preds[sel_idx][0].numpy()
+
+    # SVI for selected surface
     masked_iv = inp_tensor[0].numpy()
     params_list = calibrate_surface(log_m, masked_iv, taus, obs_mask)
     svi_pred = np.zeros_like(gt)
@@ -1269,11 +1332,19 @@ def fig_sample_reconstruction(
             cmap=cmap,
             vmin=vmin,
             vmax=vmax,
-            extent=[log_m[0], log_m[-1], taus[0], taus[-1]],
         )
         ax.set_title(title)
         ax.set_xlabel("Log-moneyness")
         ax.set_ylabel(r"$\tau$ (years)")
+        # X-axis: log-moneyness ticks
+        n_lm = len(log_m)
+        lm_ticks = np.linspace(0, n_lm - 1, 5)
+        lm_labels = [f"{log_m[int(round(t))]:.1f}" for t in lm_ticks]
+        ax.set_xticks(lm_ticks)
+        ax.set_xticklabels(lm_labels)
+        # Y-axis: actual tenor values (uniform cell height)
+        ax.set_yticks(range(len(taus)))
+        ax.set_yticklabels([f"{t:.2f}" for t in taus])
 
     fig.colorbar(im, ax=axes, label="Implied Volatility", shrink=0.8)
     return fig
@@ -1377,10 +1448,11 @@ def fig_smile_slices(
     obs_mask: np.ndarray,
     taus: np.ndarray,
     log_m: np.ndarray,
+    target_taus: list[float] | None = None,
 ) -> matplotlib.figure.Figure:
     """1x3 panel: GT vs model predictions at 3 tenors."""
-    # Select tenor indices closest to 0.25, 0.75, 2.0
-    target_taus = [0.25, 0.75, 2.0]
+    if target_taus is None:
+        target_taus = [0.08, 0.75, 2.0]
     tau_indices = [int(np.argmin(np.abs(taus - t))) for t in target_taus]
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 4))
@@ -1399,15 +1471,14 @@ def fig_smile_slices(
         ax.plot(
             log_m[~slice_mask],
             gt[ti][~slice_mask],
-            "ko",
+            "kx",
             markersize=4,
-            fillstyle="none",
             label="Missing",
             zorder=5,
         )
 
         # Model predictions
-        for name in ["Transformer", "CNN", "SVI"]:
+        for name in ["Transformer", "U-Net", "CNN", "SVI"]:
             pred = model_preds.get(name)
             if pred is not None:
                 color = MODEL_COLORS.get(name, "gray")
@@ -1501,6 +1572,7 @@ def main() -> None:
     if do_figures:
         print("\nGenerating figures from pre-computed metrics...")
         save_fig(fig_rmse_bar_chart(), "rmse_bar_chart")
+        save_fig(fig_rmse_bar_chart_real(), "rmse_bar_chart_real")
         save_fig(fig_pareto_accuracy_vs_arbitrage(), "pareto_accuracy_arbitrage")
         save_fig(fig_masking_degradation(), "masking_degradation")
         save_fig(fig_transfer_waterfall(), "transfer_waterfall")

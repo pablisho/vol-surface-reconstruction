@@ -96,9 +96,11 @@ class VolSurfaceDataset(Dataset):
         self,
         data_dir: str | Path,
         mask_config: MaskConfig | None = None,
+        seed: int | None = None,
     ) -> None:
         data_dir = Path(data_dir)
         self.mask_config = mask_config or MaskConfig()
+        self.seed = seed
 
         # Load surfaces
         data = np.load(data_dir / "surfaces.npz")
@@ -127,8 +129,8 @@ class VolSurfaceDataset(Dataset):
         ivs = self.ivs[idx]  # (n_taus, n_strikes)
         shape = ivs.shape
 
-        # Generate on-the-fly mask (different each call)
-        rng = np.random.default_rng()
+        # Generate on-the-fly mask (reproducible if seed is set)
+        rng = np.random.default_rng(self.seed + idx if self.seed is not None else None)
         mask = self._make_mask(shape, rng)
 
         # Combine with real-data mask if present
