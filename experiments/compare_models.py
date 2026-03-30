@@ -256,13 +256,15 @@ def _fmt_sci(v: float | None) -> str:
 
 
 def generate_synthetic_table(entries: list[ModelEntry]) -> str:
-    """Booktabs LaTeX table for synthetic results."""
+    """Booktabs LaTeX table for synthetic results, sorted by RMSE ascending."""
     lines = [
         r"\begin{tabular}{lrrrrrr}",
         r"\toprule",
         r"Model & Params & RMSE$_\text{miss}$ & MAE & Max Error & Calendar & Butterfly \\",
         r"\midrule",
     ]
+    # Collect rows with their RMSE for sorting
+    rows: list[tuple[float, str]] = []
     for e in entries:
         m = load_metrics(e.model, e.variant)
         if m is None:
@@ -270,7 +272,8 @@ def generate_synthetic_table(entries: list[ModelEntry]) -> str:
         t = extract_test_metrics(m)
         if t is None:
             continue
-        lines.append(
+        rmse = t.get("rmse_missing", float("inf"))
+        row = (
             f"{e.display_name} & {_fmt_params(e.n_params)} & "
             f"{_fmt_rmse(t.get('rmse_missing'))} & "
             f"{_fmt_rmse(t.get('mae'))} & "
@@ -278,6 +281,9 @@ def generate_synthetic_table(entries: list[ModelEntry]) -> str:
             f"{_fmt_pct(extract_calendar_rate(m))} & "
             f"{_fmt_pct(extract_butterfly_rate(m))} \\\\"
         )
+        rows.append((rmse, row))
+    for _, row in sorted(rows):
+        lines.append(row)
     lines.append(r"\bottomrule")
     lines.append(r"\end{tabular}")
     return "\n".join(lines)
