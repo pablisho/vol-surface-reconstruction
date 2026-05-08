@@ -1,6 +1,6 @@
-# Volatility Surface Reconstruction via Deep Learning
+# Volatility Surface Reconstruction Using Deep Learning
 
-Code for the master's thesis *"Reconstrucción de Superficies de Volatilidad Mediante Deep Learning Bajo Restricciones de No Arbitraje"* (Volatility Surface Reconstruction via Deep Learning Under No-Arbitrage Constraints), Faculty of Engineering, University of Buenos Aires.
+Code and experiments for the master's thesis *Volatility Surface Reconstruction Using Deep Learning Under No-Arbitrage Constraints*, Faculty of Engineering, University of Buenos Aires.
 
 ## Overview
 
@@ -10,19 +10,28 @@ Implied volatility surfaces are essential for derivatives pricing and risk manag
 
 - **Transformer and U-Net** are statistically tied at the top in reconstruction accuracy (RMSE 0.0045), with CNN and MLP trailing.
 - The **Transformer degrades most gracefully** under increasing sparsity, achieving 9x lower error than SVI at 90% missing data.
-- **No-arbitrage constraints act as free regularizers** for convolutional architectures: the U-Net improves RMSE by 6% while reducing arbitrage severity by 5x.
+- **No-arbitrage constraints act as free regularizers** for convolutional architectures: the CNN improves RMSE by 6%, while the U-Net maintains accuracy and substantially reduces arbitrage severity.
 - All neural models achieve ~2x lower error than SVI on real SPY options data (3,900 surfaces, 2008-2025).
 
 ## Citation
 
+Please cite the English version of the thesis:
+
 ```bibtex
 @mastersthesis{rodriguez2026volsurf,
   author  = {Pablo Ariel Rodriguez},
-  title   = {Reconstrucción de Superficies de Volatilidad Mediante Deep Learning Bajo Restricciones de No Arbitraje},
-  school  = {Universidad de Buenos Aires, Facultad de Ingeniería},
-  year    = {2026}
+  title   = {Volatility Surface Reconstruction Using Deep Learning Under No-Arbitrage Constraints},
+  school  = {University of Buenos Aires, Faculty of Engineering},
+  type    = {Electronic Engineering Thesis},
+  year    = {2026},
+  url     = {https://github.com/pablisho/vol-surface-reconstruction}
 }
 ```
+
+## Thesis
+
+- [English thesis](Thesis%20-%20Pablo%20Rodriguez%20-%20Volatility%20Surface%20Reconstruction%20Using%20Deep%20Learning%20Under%20No-Arbitrage%20Constraints.pdf) - recommended version for citation.
+- [Spanish thesis](Tesis%20-%20Pablo%20Rodriguez%20-%20Reconstruccion%20de%20Superficies%20de%20Volatilidad.pdf) - defended source version.
 
 ## Repository structure
 
@@ -70,8 +79,11 @@ tests/              Unit tests for the pricing library
 conda create -n msthesis python=3.11
 conda activate msthesis
 
-# Install dependencies
-pip install numpy scipy matplotlib torch torchvision pytest ruff
+# Install runtime dependencies
+pip install numpy scipy pandas matplotlib torch
+
+# Install development tools
+pip install -r requirements-dev.txt
 
 # Verify
 python -m pytest
