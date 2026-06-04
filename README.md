@@ -15,16 +15,18 @@ Implied volatility surfaces are essential for derivatives pricing and risk manag
 
 ## Citation
 
-Please cite the English version of the thesis:
+Please cite the arXiv version of the thesis:
 
 ```bibtex
-@mastersthesis{rodriguez2026volsurf,
-  author  = {Pablo Ariel Rodriguez},
-  title   = {Volatility Surface Reconstruction Using Deep Learning Under No-Arbitrage Constraints},
-  school  = {University of Buenos Aires, Faculty of Engineering},
-  type    = {Electronic Engineering Thesis},
-  year    = {2026},
-  url     = {https://github.com/pablisho/vol-surface-reconstruction}
+@misc{rodriguezmanzi2026volsurf,
+  title         = {Volatility Surface Reconstruction using Deep Learning under No-Arbitrage Constraints},
+  author        = {Pablo Rodriguez Manzi},
+  year          = {2026},
+  eprint        = {2605.24031},
+  archivePrefix = {arXiv},
+  primaryClass  = {q-fin.CP},
+  doi           = {10.48550/arXiv.2605.24031},
+  url           = {https://arxiv.org/abs/2605.24031}
 }
 ```
 
